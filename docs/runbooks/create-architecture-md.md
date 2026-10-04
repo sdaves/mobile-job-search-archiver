@@ -288,6 +288,73 @@ C4Context
 
 ---
 
+## 5b. Fixing overlapping lines and labels (remediation plan)
+
+Symptom reported: **every** diagram has wires and labels that overlap. This is a
+known Mermaid limitation, not one bad diagram. The plan below is ordered
+easiest → most thorough; apply A + B first, keep C only as a last resort.
+
+**Root cause.** Mermaid always connects shapes **centre-to-centre**; there are
+no connection ports or per-edge anchors for C4/flowchart/class. So any node that
+fans out (or fans in) to many edges stacks those edges at one point, and edge
+labels sit at wire midpoints, colliding with crossing wires. Diagram density and
+renderer config make it worse.
+
+### A. Renderer/config tuning (small, immediate, partial)
+
+In the viewer `mermaid.initialize`:
+
+- Raise C4 spacing: `c4ShapeMargin: 120`, `diagramMarginX: 120`,
+  `diagramMarginY: 60` (up from 80/60/20).
+- Switch `useMaxWidth` to **`true`** for all diagram families so wide diagrams
+  scale into the panel instead of clipping/overflowing (`overflow-x:auto` can
+  then be dropped or kept as a fallback).
+- Flowchart: `nodeSpacing: 60`, `rankSpacing: 80`.
+- Sequence: `actorMargin: 60`, `messageMargin: 50`, `boxMargin: 16`,
+  `mirrorActors: false`, `wrap: true`.
+- Add a **label halo** so labels occlude wires instead of being crossed by
+  them: `.md .mermaid .edgeLabel, .md .mermaid text { paint-order: stroke;
+  stroke: #0f131a; stroke-width: 3px; }` and `.md .mermaid text { font-size:
+  12px; }`. This alone removes the most visible "label under a line" symptom.
+
+### B. Restructure the Mermaid source (best real fix)
+
+- **Split labelled hubs.** Any node with 5+ labelled spokes → two diagrams.
+  Split alongside an existing boundary (read/control plane vs write/data plane)
+  so it stays valid C4. Applies here to L3a (`router` fans out to 5) and L3b
+  (`transport` fans in from 4).
+- **Collapse redundant `Rel()`s.** Route several spokes through one intermediate
+  node, or group by concern.
+- **Level 4 `classDiagram`.** Class diagrams place classes independently of the
+  relationship edges, which is why long crossing dotted lines appear. Replace
+  the sprawling single class diagram with **two smaller ones** (e.g. "State
+  model" and "Modules") or the same content as a compact ER-style flowchart.
+- **Sequence.** `alt/else` plus 6 participants on a phone is tight: reduce
+  participants, `wrap:true`, and split the happy path from the failure path.
+- **L1/L2.** Raise `c4ShapeInRow` (e.g. 3) so nodes spread and edges diverge
+  before labelling.
+
+### C. SVG post-processing (last resort — keep hubs without splitting)
+
+Because the viewer sets `securityLevel: "loose"`, after `mermaid.run()` you can
+walk each SVG's `path.edgePath`/relationship paths and nudge the start `M x y`
+(or endpoint) coordinates apart along the shape edge. Powerful but brittle to
+the Mermaid version and fiddly for C4's composite curves. Prefer B.
+
+### Applied checklist
+
+- [ ] Viewer init updated per A (margins up, `useMaxWidth:true`, sequence/
+      flowchart spacing, label-halo CSS).
+- [ ] L3a split into two component diagrams (no node with 5 spokes).
+- [ ] L3b split so `transport` has ≤ 3 spokes per diagram.
+- [ ] Level 4 split into two smaller class diagrams (or ER-style).
+- [ ] Sequence tuned (`wrap`, margins) and/or happy-vs-failure split.
+- [ ] L1/L2 `UpdateLayoutConfig` + raised margins.
+- [ ] Re-run §6 parse check (all diagrams parse).
+- [ ] Visual re-check in the dashboard `/docs` viewer at phone width.
+
+---
+
 ## 6. Validate the diagrams parse
 
 Save as `validate-mermaid.mjs` and run:

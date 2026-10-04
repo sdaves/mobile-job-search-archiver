@@ -55,6 +55,13 @@
   .md hr { border: 0; border-top: 1px solid #232936; margin: 1.2em 0; }
   .md .mermaid { background: #0f131a; border: 1px solid #232936; border-radius: 8px; padding: 12px; margin: .8em 0; overflow-x: auto; }
   .md .mermaid svg { height: auto; }
+  .md .mermaid text { font-size: 12px; }
+  .md .mermaid .edgeLabel, .md .mermaid .messageText, .md .mermaid .relationshipLabelBox + text, .md .mermaid text.label {
+    paint-order: stroke;
+    stroke: #0f131a;
+    stroke-width: 3px;
+    stroke-linejoin: round;
+  }
   select { background: #0f131a; color: #e6e8eb; border: 1px solid #2c3342; border-radius: 8px; padding: 8px 10px; font: inherit; }
 </style>
 </head>

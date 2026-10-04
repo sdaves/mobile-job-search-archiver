@@ -22,7 +22,7 @@ The widest view: who uses the system and which external systems it depends on.
 ```mermaid
 C4Context
     title Level 1 — System Context for the jobs collector
-    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
+    UpdateLayoutConfig($c4ShapeInRow="4", $c4BoundaryInRow="1")
 
     Person(user, "Job Seeker", "Operates the collector; reads exports")
 
@@ -74,7 +74,7 @@ the data they own.
 ```mermaid
 C4Container
     title Level 2 — Container diagram for the jobs collector
-    UpdateLayoutConfig($c4ShapeInRow="2", $c4BoundaryInRow="1")
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 
     Person(user, "Job Seeker", "Dashboard operator")
 
@@ -139,51 +139,89 @@ times, which crowds the relationship labels.
 
 ### Level 3a — Bun Server components
 
+Split into a **read/control plane** and a **write/data plane** so no node fans
+out to five labelled spokes (the old single diagram stacked five arrows on the
+router and merged their labels).
+
+#### Level 3a-i — Server control plane
+
 ```mermaid
 C4Component
-    title Level 3a — Bun Server components
-    UpdateLayoutConfig($c4ShapeInRow="2", $c4BoundaryInRow="1")
+    title Level 3a-i — Bun Server control plane
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 
     Container_Boundary(server, "Bun Server (server.ts)") {
         Component(router, "HTTP Router", "Bun.serve", "Endpoints, CORS, req.log")
         Component(orch, "Orchestrator", "handleNext", "Budget, pacing, queue")
-        Component(ingest, "Ingest & Dedupe", "handleIngest", "Normalise, gate, enqueue")
-        Component(exporter, "Export Builder", "buildExport", "Merge, parse, render")
-        Component(loghub, "Log Collector", "handleLog", "Append / rotate web.log")
         Component(sse, "SSE Broadcaster", "broadcast", "Push live state")
     }
 
     Rel(router, orch, "next")
-    Rel(router, ingest, "ingest")
-    Rel(router, exporter, "export")
-    Rel(router, loghub, "log")
     Rel(router, sse, "events")
     Rel(sse, orch, "state")
 ```
 
-### Level 3b — Core Scraper components
+#### Level 3a-ii — Server data plane
 
 ```mermaid
 C4Component
-    title Level 3b — Core Scraper components
-    UpdateLayoutConfig($c4ShapeInRow="2", $c4BoundaryInRow="1")
+    title Level 3a-ii — Bun Server data plane
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 
-    System_Ext(indeed, "Indeed", "Job board")
+    Container_Boundary(server, "Bun Server (server.ts)") {
+        Component(router, "HTTP Router", "Bun.serve", "Endpoints, CORS, req.log")
+        Component(ingest, "Ingest & Dedupe", "handleIngest", "Normalise, gate, enqueue")
+        Component(exporter, "Export Builder", "buildExport", "Merge, parse, render")
+        Component(loghub, "Log Collector", "handleLog", "Append / rotate web.log")
+    }
+
+    Rel(router, ingest, "ingest")
+    Rel(router, exporter, "export")
+    Rel(router, loghub, "log")
+```
+
+### Level 3b — Core Scraper components
+
+Split so `transport` never receives more than three labelled spokes at once:
+one diagram for the **page pipeline**, one for the **transport boundary**.
+
+#### Level 3b-i — Core page pipeline
+
+```mermaid
+C4Component
+    title Level 3b-i — Core Scraper page pipeline
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 
     Container_Boundary(core, "Core Scraper (agent-core.js)") {
-        Component(transport, "Transport", "GM_xmlhttpRequest", "post / getNext / flush")
         Component(capture, "Log & Error Capture", "console hooks", "Console + uncaught errors")
         Component(detect, "Page Detector", "pageType / isChallenge", "Classify page; spot Cloudflare")
         Component(parsers, "Scrapers", "search / job / company", "JSON-LD first, DOM fallback")
         Component(nav, "Navigator", "advance", "Fetch next; schedule location.assign")
     }
 
-    Rel(capture, transport, "batches")
+    Rel(capture, nav, "diagnostics")
     Rel(detect, parsers, "selects")
+    Rel(parsers, nav, "records")
+```
+
+#### Level 3b-ii — Core transport boundary
+
+```mermaid
+C4Component
+    title Level 3b-ii — Core Scraper transport boundary
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
+
+    System_Ext(indeed, "Indeed", "Job board")
+
+    Container_Boundary(core, "Core Scraper (agent-core.js)") {
+        Component(transport, "Transport", "GM_xmlhttpRequest", "post / getNext / flush")
+        Component(parsers, "Scrapers", "search / job / company", "JSON-LD first, DOM fallback")
+        Component(nav, "Navigator", "advance", "Fetch next; schedule location.assign")
+    }
+
     Rel(parsers, transport, "records")
     Rel(nav, transport, "next")
     Rel(transport, indeed, "reads", "HTTP")
-    Rel(detect, indeed, "inspects")
 ```
 
 **Bun Server components**
@@ -235,11 +273,15 @@ C4Component
 ## Level 4 — Code
 
 The narrowest view: the concrete code structures of the server's domain logic.
-This is a class-style diagram of the types and key pure/near-pure functions that
-implement state, dedupe, and export.
+Split into two smaller class diagrams — the **state model** (data) and the
+**modules** (behaviour) — because one diagram forced long dotted dependency
+lines to cross the layout and overlap.
+
+#### Level 4a — State model
 
 ```mermaid
 classDiagram
+    direction LR
     class State {
         +string date
         +boolean running
@@ -260,7 +302,6 @@ classDiagram
         +number reloadToken
         +string[] log
     }
-
     class Task {
         +string type
         +string url
@@ -268,24 +309,32 @@ classDiagram
         +string jk
         +string company
     }
-
     class SeenJob {
         +boolean full
         +boolean salary
         +boolean company
     }
-
     class Stats {
         +number searches
         +number jobs
         +number companies
     }
-
     class Queued {
         +string[] jobs
         +string[] companies
     }
 
+    State "1" *-- "1" Queued
+    State "1" *-- "1" Stats
+    State "1" o-- "0..*" Task : queue
+    State "1" o-- "0..*" SeenJob : seenJobs
+```
+
+#### Level 4b — Server modules
+
+```mermaid
+classDiagram
+    direction LR
     class Orchestrator {
         +buildQueue() void
         +handleNext() Response
@@ -294,7 +343,6 @@ classDiagram
         +finalizeRun(reason) void
         +rollover() void
     }
-
     class Ingest {
         +handleIngest(req) Response
         +seenFlags(rec) SeenJob
@@ -303,7 +351,6 @@ classDiagram
         +mergedSeen(prev, flags) SeenJob
         +norm(s) string
     }
-
     class ExportBuilder {
         +buildExport() Job[]
         +parseSalary(raw) Salary
@@ -315,14 +362,8 @@ classDiagram
         +toMarkdown(rows) string
     }
 
-    State "1" *-- "1" Queued
-    State "1" *-- "1" Stats
-    State "1" o-- "0..*" Task : queue
-    State "1" o-- "0..*" SeenJob : seenJobs
-    Orchestrator ..> State : mutates
-    Ingest ..> SeenJob : gates on
-    Ingest ..> State : appends queue
-    ExportBuilder ..> SeenJob : consumes listings
+    Orchestrator ..> Ingest : hands off records
+    Ingest ..> ExportBuilder : publishes listings
 ```
 
 - **State.** The single in-memory source of truth for a run. Modelling it as one
@@ -366,37 +407,48 @@ classDiagram
 
 ## Runtime view (appendix)
 
-A dynamic complement to the static levels: one turn of the crawl loop.
+A dynamic complement to the static levels. Split into the **happy path** (one
+successful turn of the crawl loop) and the **failure path** (Cloudflare /
+budget), so neither sequence crowds six participants with an `alt` block.
+
+#### Happy path — one crawl turn
 
 ```mermaid
 sequenceDiagram
     participant U as Job Seeker
     participant P as Control Panel
     participant S as Bun Server
-    participant L as Loader
     participant C as Core Scraper
     participant I as Indeed
 
     U->>P: Click Start
-    P->>S: POST /control {cmd:start}
-    Note over L: on each Indeed page load
-    L->>S: GET /agent-core.js (no-store)
-    L->>C: eval core with GM_* globals
+    P->>S: POST /control start
+    Note over C: on each Indeed page load
     C->>S: GET /next
-    S-->>C: {action,url,delayMs}
-    C->>C: wait delayMs, location.assign(url)
+    S-->>C: action, url, delayMs
     C->>I: navigate /viewjob
     I-->>C: HTML + JSON-LD
-    C->>S: POST /ingest {kind:job,...}
-    S->>S: dedupe + queue company page
-    C->>S: POST /log (console/diagnostics)
+    C->>S: POST /ingest job
+    S->>S: dedupe + queue company
+    C->>S: POST /log diagnostics
     C->>S: GET /next
+```
+
+#### Failure path — challenge and budget
+
+```mermaid
+sequenceDiagram
+    participant U as Job Seeker
+    participant P as Control Panel
+    participant S as Bun Server
+    participant C as Core Scraper
+
     alt Cloudflare challenge
-        C->>S: POST /ingest {kind:status, challenge:true}
+        C->>S: POST /ingest challenge true
         S-->>P: SSE paused
         U->>P: solve CAPTCHA, Start again
     else budget exhausted
-        S-->>C: {action:stop, reason:budget}
+        S-->>C: stop, reason budget
     end
 ```
 
@@ -417,5 +469,6 @@ the crawl within Cloudflare and Indeed-ToS tolerances.
 |-------|--------------|---------------------|
 | 1 Context | `C4Context` | Who uses it and what external systems does it touch? |
 | 2 Container | `C4Container` | What separately running/deployable pieces make it up? |
-| 3 Component | `C4Component` ×2 | What responsibilities live inside each container? |
-| 4 Code | `classDiagram` | Which concrete types/functions implement those responsibilities? |
+| 3 Component | `C4Component` ×4 | What responsibilities live inside each container? (server split into control/data plane; core split into pipeline/transport) |
+| 4 Code | `classDiagram` ×2 | Which concrete types/functions implement those responsibilities? (state model + server modules) |
+| Runtime | `sequenceDiagram` ×2 | Happy path and failure path of one crawl turn. |

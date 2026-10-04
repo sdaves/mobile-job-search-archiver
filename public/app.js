@@ -128,16 +128,23 @@ function loadMermaid() {
           theme: "dark",
           securityLevel: "loose",
           c4: {
-            useMaxWidth: false,
-            c4ShapeInRow: 2,
+            useMaxWidth: true,
+            c4ShapeInRow: 3,
             c4BoundaryInRow: 1,
-            c4ShapeMargin: 80,
-            diagramMarginX: 60,
-            diagramMarginY: 20,
+            c4ShapeMargin: 120,
+            diagramMarginX: 120,
+            diagramMarginY: 60,
           },
-          flowchart: { useMaxWidth: false },
-          sequence: { useMaxWidth: false },
-          class: { useMaxWidth: false },
+          flowchart: { useMaxWidth: true, nodeSpacing: 60, rankSpacing: 80 },
+          sequence: {
+            useMaxWidth: true,
+            actorMargin: 60,
+            messageMargin: 50,
+            boxMargin: 16,
+            mirrorActors: false,
+            wrap: true,
+          },
+          class: { useMaxWidth: true },
         });
       } catch {}
       resolve(window.mermaid);
