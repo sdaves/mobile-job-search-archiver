@@ -67,31 +67,17 @@
     } catch {}
   }
 
-  function runDirect(coreSrc) {
-    const factory = new Function(
-      "GM_xmlhttpRequest",
-      "GM_getValue",
-      "GM_setValue",
-      "unsafeWindow",
-      coreSrc,
-    );
-    factory(GM_xmlhttpRequest, GM_getValue, GM_setValue, unsafeWindow);
+  function makeFactory(coreSrc) {
+    const wrapper =
+      "(function(GM_xmlhttpRequest,GM_getValue,GM_setValue,unsafeWindow){" +
+      coreSrc +
+      "\n})";
+    return (0, eval)(wrapper);
   }
 
-  function runViaPage(coreSrc) {
-    const w = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
-    w.__jobsCoreSrc = coreSrc;
-    w.__jobsCoreFn = { GM_xmlhttpRequest, GM_getValue, GM_setValue, unsafeWindow };
-    const s = document.createElement("script");
-    s.textContent =
-      "(function(){" +
-      "const w=window;" +
-      "const src=w.__jobsCoreSrc;const g=w.__jobsCoreFn;" +
-      "try{new Function('GM_xmlhttpRequest','GM_getValue','GM_setValue','unsafeWindow',src)" +
-      "(g.GM_xmlhttpRequest,g.GM_getValue,g.GM_setValue,g.unsafeWindow);}" +
-      "finally{try{delete w.__jobsCoreSrc;delete w.__jobsCoreFn;}catch(e){}}})();";
-    (document.head || document.documentElement).appendChild(s);
-    s.remove();
+  function runDirect(coreSrc) {
+    const factory = makeFactory(coreSrc);
+    factory(GM_xmlhttpRequest, GM_getValue, GM_setValue, unsafeWindow);
   }
 
   async function boot() {
@@ -102,22 +88,10 @@
     }
     try {
       runDirect(coreSrc);
-      return;
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
-      if (!/CSP|Function|eval/i.test(msg)) {
-        banner("agent-core error: " + msg, "#b3261e");
-        sendLog({ level: "error", src: "loader", url: location.href, msg: "agent-core eval failed: " + msg, stack: e && e.stack });
-        return;
-      }
-      sendLog({ level: "warn", src: "loader", url: location.href, msg: "new Function blocked, trying page-script injection: " + msg });
-    }
-    try {
-      runViaPage(coreSrc);
-    } catch (e) {
-      const msg = e && e.message ? e.message : String(e);
-      banner("agent-core inject error: " + msg, "#b3261e");
-      sendLog({ level: "error", src: "loader", url: location.href, msg: "page-script injection failed: " + msg, stack: e && e.stack });
+      banner("agent-core error: " + msg, "#b3261e");
+      sendLog({ level: "error", src: "loader", url: location.href, msg: "agent-core eval failed: " + msg, stack: e && e.stack });
     }
   }
 

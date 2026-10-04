@@ -150,12 +150,22 @@ function finalizeRun(reason: string) {
   saveState();
 }
 
+const INDEED_BASE = "https://www.indeed.com/m";
+
+function toMobileUrl(url: string) {
+  if (!url) return url;
+  return url
+    .replace(/^https?:\/\/(?:[a-z0-9-]+\.)*indeed\.com\/viewjob\?/i, `${INDEED_BASE}/viewjob?`)
+    .replace(/^https?:\/\/(?:[a-z0-9-]+\.)*indeed\.com\/jobs\?/i, `${INDEED_BASE}/jobs?`)
+    .replace(/^https?:\/\/(?:[a-z0-9-]+\.)*indeed\.com\/cmp\//i, `${INDEED_BASE}/cmp/`);
+}
+
 function buildQueue() {
   for (const term of _state.terms) {
     const q = encodeURIComponent(term);
     _state.queue.push({
       type: "search",
-      url: `https://www.indeed.com/jobs?q=${q}&l=Remote`,
+      url: `${INDEED_BASE}/jobs?q=${q}&l=Remote`,
       term,
     });
   }
@@ -617,7 +627,7 @@ async function handleIngest(req: Request) {
         _state.seenJobs[key] = mergedSeen(_state.seenJobs[key], f);
       }
       if (j.url) {
-        _state.queue.push({ type: "job", url: j.url, jk: key, company: j.company });
+        _state.queue.push({ type: "job", url: toMobileUrl(j.url), jk: key, company: j.company });
       }
       added++;
     }
@@ -636,7 +646,7 @@ async function handleIngest(req: Request) {
     const cname = norm(body.company);
     if (body.company_url && cname && !_state.queued.companies.includes(cname)) {
       _state.queued.companies.push(cname);
-      _state.queue.push({ type: "company", url: body.company_url, company: body.company });
+      _state.queue.push({ type: "company", url: toMobileUrl(body.company_url), company: body.company });
     }
     addLog(`job "${body.title || ""}" @ ${body.company || ""}`);
   } else if (kind === "company") {

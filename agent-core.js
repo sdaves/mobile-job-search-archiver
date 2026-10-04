@@ -312,7 +312,7 @@
               remote: /remote/i.test(
                 String(it.formattedLocation || it.location || it.remoteLocation || ""),
               ),
-              url: "https://www.indeed.com/viewjob?jk=" + jk,
+              url: "https://www.indeed.com/m/viewjob?jk=" + jk,
             };
           });
         }
@@ -362,7 +362,7 @@
         location: location_,
         salary_raw: salary,
         remote: /remote/i.test(location_),
-        url: "https://www.indeed.com/viewjob?jk=" + jk,
+        url: "https://www.indeed.com/m/viewjob?jk=" + jk,
       });
     }
     return out;
@@ -441,7 +441,7 @@
       date_posted: ld.datePosted || "",
       description_html: String(descriptionHtml || "").slice(0, MAX_DESC),
       apply_url: applyUrl,
-      url: location.origin + "/viewjob?jk=" + (jk || ""),
+      url: "https://www.indeed.com/m/viewjob?jk=" + (jk || ""),
     };
   }
 
@@ -492,7 +492,7 @@
     return {
       kind: "company",
       name,
-      url: location.origin + location.pathname,
+      url: "https://www.indeed.com/m" + location.pathname,
       size_raw: parsed.raw || sizeRaw,
       size_min: parsed.min,
       size_max: parsed.max,
