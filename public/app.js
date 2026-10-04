@@ -90,7 +90,7 @@ async function loadListings() {
         : j.description_snippet
           ? '<span class="muted">snippet</span>'
           : '<span class="muted">—</span>';
-      tr.innerHTML = `<td>${escapeHtml(j.title || "")}</td><td>${escapeHtml(j.company || "")}</td><td>${size}</td><td>${desc}</td><td>${escapeHtml(j.salary_raw || "")}</td><td>${escapeHtml(j.location || "")}</td>`;
+      tr.innerHTML = `<td>${escapeHtml(j.title || "")}</td><td>${escapeHtml(j.company || "")}</td><td>${size}</td><td>${escapeHtml(j.salary_raw || "")}</td><td>${escapeHtml(j.location || "")}</td><td>${desc}</td>`;
       tb.appendChild(tr);
     }
   } catch {}
