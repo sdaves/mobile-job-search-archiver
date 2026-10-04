@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Indeed Small Company Job Collector (loader)
 // @namespace    http://127.0.0.1:8000/
-// @version      0.5.0
+// @version      0.5.1
 // @description  Loads the live collector core from the local Termux jobs server
 // @match        https://*.indeed.com/*
 // @grant        GM_xmlhttpRequest
@@ -95,7 +95,7 @@
   }
 
   async function boot() {
-    sendLog({ level: "info", src: "loader", url: location.href, msg: "loader v0.5.0 alive" });
+    sendLog({ level: "info", src: "loader", url: location.href, msg: "loader v0.5.1 alive" });
     const coreSrc = await getText("/agent-core.js?t=" + Date.now());
     if (!coreSrc) {
       banner("Could not load agent-core.js from " + BASE, "#b06000");
@@ -140,10 +140,19 @@
       return;
     }
     if (v.reloadToken !== lastToken || v.coreHash !== lastCoreHash) {
+      lastToken = v.reloadToken;
+      lastCoreHash = v.coreHash;
       location.reload();
     }
   }
 
   boot();
   setInterval(checkReload, 3000);
+  // Firefox Android can suspend timers while a tab is backgrounded; also check
+  // whenever the tab is shown again so edits take effect without waiting.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) checkReload();
+  });
+  window.addEventListener("focus", checkReload);
+  window.addEventListener("pageshow", checkReload);
 })();

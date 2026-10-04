@@ -793,6 +793,11 @@ const server = Bun.serve({
     if (p === "/" || p === "/index.html") {
       return new Response(Bun.file(join(PUBLIC, "index.html")));
     }
+    if (p === "/ping.js") {
+      return new Response(Bun.file(join(PUBLIC, "ping.js")), {
+        headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" },
+      });
+    }
     if (p === "/app.js") {
       return new Response(Bun.file(join(PUBLIC, "app.js")), {
         headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" },
