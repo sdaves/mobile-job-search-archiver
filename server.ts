@@ -56,6 +56,7 @@ type State = {
   maxPages: number;
   queue: Task[];
   queued: { jobs: string[]; companies: string[] };
+  seenJobs: Record<string, { full: boolean; salary: boolean; company: boolean }>;
   pagesThisRun: number;
   stats: { searches: number; jobs: number; companies: number };
   reloadToken: number;
@@ -86,6 +87,7 @@ function defaultState(): State {
     maxPages: 40,
     queue: [],
     queued: { jobs: [], companies: [] },
+    seenJobs: {},
     pagesThisRun: 0,
     stats: { searches: 0, jobs: 0, companies: 0 },
     reloadToken: 0,
@@ -101,6 +103,7 @@ function loadState() {
       const raw = JSON.parse(readFileSync(STATE_FILE, "utf8"));
       _state = { ...defaultState(), ...raw };
       _state.queued = { jobs: [], companies: [], ...(raw.queued || {}) };
+      _state.seenJobs = buildSeenIndex();
       _state.stats = { searches: 0, jobs: 0, companies: 0, ...(raw.stats || {}) };
     }
   } catch {
@@ -160,6 +163,45 @@ function buildQueue() {
 
 function appendJsonl(file: string, obj: any) {
   appendFileSync(file, JSON.stringify(obj) + "\n");
+}
+
+type SeenJob = { full: boolean; salary: boolean; company: boolean };
+
+function seenFlags(rec: any): SeenJob {
+  return {
+    full: !!(rec && rec.description_html && String(rec.description_html).length > 0),
+    salary: !!(rec && rec.salary_raw && String(rec.salary_raw).trim()),
+    company: !!(rec && rec.company && String(rec.company).trim()),
+  };
+}
+
+function buildSeenIndex(): Record<string, SeenJob> {
+  const idx: Record<string, SeenJob> = {};
+  for (const rec of readJsonl(LISTINGS_FILE)) {
+    if (rec && rec.kind === "job" && rec.jk) {
+      const f = seenFlags(rec);
+      const prev = idx[String(rec.jk)];
+      idx[String(rec.jk)] = {
+        full: (prev?.full || false) || f.full,
+        salary: (prev?.salary || false) || f.salary,
+        company: (prev?.company || false) || f.company,
+      };
+    }
+  }
+  return idx;
+}
+
+function hasNewInfo(prev: SeenJob | undefined, f: SeenJob) {
+  if (!prev) return true;
+  return (f.full && !prev.full) || (f.salary && !prev.salary) || (f.company && !prev.company);
+}
+
+function mergedSeen(prev: SeenJob | undefined, f: SeenJob): SeenJob {
+  return {
+    full: (prev?.full || false) || f.full,
+    salary: (prev?.salary || false) || f.salary,
+    company: (prev?.company || false) || f.company,
+  };
 }
 
 function fileHash(file: string) {
@@ -551,18 +593,30 @@ async function handleIngest(req: Request) {
     let added = 0;
     for (const j of jobs) {
       if (!j.jk) continue;
-      if (_state.queued.jobs.includes(j.jk)) continue;
-      _state.queued.jobs.push(j.jk);
-      appendJsonl(LISTINGS_FILE, { kind: "job", ...j, source: "search", scraped_at });
+      const key = String(j.jk);
+      if (_state.queued.jobs.includes(key)) continue;
+      _state.queued.jobs.push(key);
+      const f = seenFlags(j);
+      if (hasNewInfo(_state.seenJobs[key], f)) {
+        appendJsonl(LISTINGS_FILE, { kind: "job", ...j, source: "search", scraped_at });
+        _state.seenJobs[key] = mergedSeen(_state.seenJobs[key], f);
+      }
       if (j.url) {
-        _state.queue.push({ type: "job", url: j.url, jk: j.jk, company: j.company });
+        _state.queue.push({ type: "job", url: j.url, jk: key, company: j.company });
       }
       added++;
     }
     _state.stats.searches++;
     addLog(`search "${body.term || ""}": +${added} jobs (queue ${_state.queue.length})`);
   } else if (kind === "job") {
-    appendJsonl(LISTINGS_FILE, { kind: "job", ...body, scraped_at });
+    const key = body.jk ? String(body.jk) : "";
+    const f = seenFlags(body);
+    if (!key || hasNewInfo(_state.seenJobs[key], f)) {
+      appendJsonl(LISTINGS_FILE, { kind: "job", ...body, source: body.source || "jobpage", scraped_at });
+      if (key) _state.seenJobs[key] = mergedSeen(_state.seenJobs[key], f);
+    } else {
+      addLog(`job "${body.title || ""}" (dup, skipped)`);
+    }
     _state.stats.jobs++;
     const cname = norm(body.company);
     if (body.company_url && cname && !_state.queued.companies.includes(cname)) {
@@ -620,6 +674,7 @@ async function handleControl(req: Request) {
     _state.stats = { searches: 0, jobs: 0, companies: 0 };
     _state.secondsUsed = 0;
     _state.pagesThisRun = 0;
+    _state.seenJobs = buildSeenIndex();
     addLog("reset queue/stats");
   } else {
     return json({ ok: false, error: "unknown cmd" }, 400);

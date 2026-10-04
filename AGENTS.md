@@ -162,6 +162,22 @@ the core polls `/livereload` and reloads, re-fetching the edited core.
 `companies.jsonl`: `{"name","url","size_raw","size_min","size_max","revenue",
 "founded","scraped_at"}`.
 
+### Ingest dedupe (`seenJobs`)
+
+State keeps `seenJobs: { [jk]: {full, salary, company} }`, rebuilt from
+`listings.jsonl` on load (disk is source of truth) and cleared/rebuilt on
+`reset`. A job record is appended only if it adds information: first time
+seen, or it gains `description_html` / `salary_raw` / `company` that the prior
+record lacked. A repeat job-page scrape with nothing new is **skipped** (counted,
+not written), so resuming a run cannot bloat `listings.jsonl`. Search stubs
+(no `description_html`) still append once per new `jk`; the later job-page
+record appends again because it adds the description. Export merges by `jk`
+anyway, so this only reduces redundant lines.
+
+`norm` (`queued.jobs`/`queued.companies`) still gates search-task, job-task,
+and company-page queueing. On `start`, the queue is rebuilt from terms **only
+when empty**; otherwise the persisted queue resumes.
+
 Export joins job->company, flags `size_min>=1 && size_max<=50`, sorts by parsed
 salary desc, and adds parsed `seniority` + `tech_tags` + a `notes` field.
 
