@@ -90,6 +90,28 @@ function escapeHtml(s) {
 }
 
 $("reload").onclick = loadListings;
+$("reloadBrowser").onclick = () => control({ cmd: "reload" });
+
+async function loadWebLog() {
+  const el = $("weblog");
+  if (!el) return;
+  try {
+    const r = await fetch("/web.log?tail=100");
+    const txt = await r.text();
+    const lines = txt
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => {
+        try {
+          const e = JSON.parse(l);
+          return `${(e.ts || "").slice(11, 19)} [${e.level}] ${e.src}: ${e.msg}`;
+        } catch {
+          return l;
+        }
+      });
+    el.textContent = lines.join("\n");
+  } catch {}
+}
 
 function connect() {
   const es = new EventSource("/events");
@@ -106,4 +128,6 @@ function connect() {
 
 connect();
 loadListings();
+loadWebLog();
 setInterval(loadListings, 15000);
+setInterval(loadWebLog, 4000);

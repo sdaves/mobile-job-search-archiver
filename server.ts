@@ -1,10 +1,13 @@
 import { join } from "path";
+import { createHash } from "crypto";
 import {
   existsSync,
   mkdirSync,
   appendFileSync,
   readFileSync,
   writeFileSync,
+  statSync,
+  renameSync,
 } from "fs";
 
 const ROOT = import.meta.dir;
@@ -13,6 +16,13 @@ const PUBLIC = join(ROOT, "public");
 const STATE_FILE = join(DATA, "state.json");
 const LISTINGS_FILE = join(DATA, "listings.jsonl");
 const COMPANIES_FILE = join(DATA, "companies.jsonl");
+const WEB_LOG = join(DATA, "web.log");
+const WEB_LOG_1 = join(DATA, "web.log.1");
+const CORE_FILE = join(ROOT, "agent-core.js");
+const LOADER_FILE = join(ROOT, "agent.user.js");
+
+const MAX_WEB_LOG_BYTES = 2 * 1024 * 1024;
+const MAX_LOG_MSG = 4000;
 
 mkdirSync(DATA, { recursive: true });
 
@@ -48,6 +58,7 @@ type State = {
   queued: { jobs: string[]; companies: string[] };
   pagesThisRun: number;
   stats: { searches: number; jobs: number; companies: number };
+  reloadToken: number;
   log: string[];
 };
 
@@ -77,6 +88,7 @@ function defaultState(): State {
     queued: { jobs: [], companies: [] },
     pagesThisRun: 0,
     stats: { searches: 0, jobs: 0, companies: 0 },
+    reloadToken: 0,
     log: [],
   };
 }
@@ -148,6 +160,70 @@ function buildQueue() {
 
 function appendJsonl(file: string, obj: any) {
   appendFileSync(file, JSON.stringify(obj) + "\n");
+}
+
+function fileHash(file: string) {
+  try {
+    return createHash("sha256").update(readFileSync(file)).digest("hex").slice(0, 16);
+  } catch {
+    return "";
+  }
+}
+
+const LOG_LEVELS = new Set(["log", "info", "warn", "error", "debug"]);
+
+function normalizeLogEntry(raw: any) {
+  if (!raw || typeof raw !== "object") return null;
+  let msg = raw.msg;
+  if (typeof msg !== "string") {
+    try {
+      msg = typeof msg === "object" && msg !== null ? JSON.stringify(msg) : String(msg);
+    } catch {
+      msg = "";
+    }
+  }
+  if (msg.length > MAX_LOG_MSG) msg = msg.slice(0, MAX_LOG_MSG) + "…[truncated]";
+  return {
+    ts: typeof raw.ts === "string" ? raw.ts : nowIso(),
+    level: LOG_LEVELS.has(raw.level) ? raw.level : "log",
+    src: typeof raw.src === "string" ? raw.src.slice(0, 40) : "page",
+    url: typeof raw.url === "string" ? raw.url.slice(0, 300) : "",
+    msg,
+    ...(raw.stack ? { stack: String(raw.stack).slice(0, MAX_LOG_MSG) } : {}),
+    ...(raw.extra && typeof raw.extra === "object" ? { extra: raw.extra } : {}),
+  };
+}
+
+function appendWebLog(entry: any) {
+  try {
+    const line = JSON.stringify(entry) + "\n";
+    if (existsSync(WEB_LOG) && statSync(WEB_LOG).size + line.length > MAX_WEB_LOG_BYTES) {
+      try {
+        renameSync(WEB_LOG, WEB_LOG_1);
+      } catch {}
+    }
+    appendFileSync(WEB_LOG, line);
+  } catch {}
+}
+
+async function handleLog(req: Request) {
+  let body: any = {};
+  try {
+    body = await req.json();
+  } catch {
+    return json({ ok: false, error: "bad json" }, 400);
+  }
+  const list = Array.isArray(body) ? body : Array.isArray(body.entries) ? body.entries : [body];
+  const capped = list.slice(0, 300);
+  let count = 0;
+  for (const raw of capped) {
+    const entry = normalizeLogEntry(raw);
+    if (entry) {
+      appendWebLog(entry);
+      count++;
+    }
+  }
+  return json({ ok: true, count });
 }
 
 function norm(s: string) {
@@ -377,6 +453,7 @@ function statePayload() {
     queueLength: _state.queue.length,
     pagesThisRun: _state.pagesThisRun,
     stats: _state.stats,
+    reloadToken: _state.reloadToken || 0,
     log: _state.log.slice(0, 40),
     date: _state.date,
   };
@@ -534,6 +611,9 @@ async function handleControl(req: Request) {
     if (body.maxPages != null) _state.maxPages = Math.max(1, Number(body.maxPages));
     if (body.delayMinMs != null) _state.delayMinMs = Math.max(500, Number(body.delayMinMs));
     if (body.delayMaxMs != null) _state.delayMaxMs = Math.max(500, Number(body.delayMaxMs));
+  } else if (cmd === "reload") {
+    _state.reloadToken = (_state.reloadToken || 0) + 1;
+    addLog(`browser reload #${_state.reloadToken}`);
   } else if (cmd === "reset") {
     _state.queue = [];
     _state.queued = { jobs: [], companies: [] };
@@ -557,6 +637,18 @@ const server = Bun.serve({
     const url = new URL(req.url);
     const p = url.pathname;
 
+    try {
+      appendFileSync(
+        join(DATA, "req.log"),
+        JSON.stringify({
+          ts: nowIso(),
+          method: req.method,
+          path: p + (url.search || ""),
+          ua: (req.headers.get("user-agent") || "").slice(0, 120),
+        }) + "\n",
+      );
+    } catch {}
+
     if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
     if (p === "/" || p === "/index.html") {
@@ -564,13 +656,40 @@ const server = Bun.serve({
     }
     if (p === "/app.js") return new Response(Bun.file(join(PUBLIC, "app.js")));
     if (p === "/agent.user.js") {
-      return new Response(Bun.file(join(ROOT, "agent.user.js")), {
-        headers: { "Content-Type": "text/javascript; charset=utf-8" },
+      return new Response(Bun.file(LOADER_FILE), {
+        headers: {
+          "Content-Type": "text/javascript; charset=utf-8",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+    if (p === "/agent-core.js") {
+      return new Response(Bun.file(CORE_FILE), {
+        headers: {
+          "Content-Type": "text/javascript; charset=utf-8",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+    if (p === "/livereload") {
+      return json({
+        reloadToken: _state.reloadToken || 0,
+        coreHash: fileHash(CORE_FILE),
+        loaderHash: fileHash(LOADER_FILE),
+      });
+    }
+    if (p === "/web.log") {
+      const tail = Math.min(2000, Math.max(1, Number(url.searchParams.get("tail")) || 200));
+      const text = existsSync(WEB_LOG) ? readFileSync(WEB_LOG, "utf8") : "";
+      const out = text.split("\n").filter(Boolean).slice(-tail).join("\n");
+      return new Response(out ? out + "\n" : "", {
+        headers: { "Content-Type": "application/x-ndjson; charset=utf-8", ...CORS },
       });
     }
     if (p === "/next") return handleNext();
     if (p === "/state") return json(statePayload());
     if (p === "/ingest" && req.method === "POST") return handleIngest(req);
+    if (p === "/log" && req.method === "POST") return handleLog(req);
     if (p === "/control" && req.method === "POST") return handleControl(req);
 
     if (p === "/events") {

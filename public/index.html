@@ -36,7 +36,7 @@
   th { color: #9aa4b2; font-weight: 600; font-size: 11px; text-transform: uppercase; }
   a { color: #7db0ff; }
   .muted { color: #9aa4b2; font-size: 12px; }
-  #log { font-family: ui-monospace, monospace; font-size: 12px; max-height: 220px; overflow: auto; white-space: pre-wrap; color: #b9c2cf; }
+  #log, #weblog { font-family: ui-monospace, monospace; font-size: 12px; max-height: 220px; overflow: auto; white-space: pre-wrap; color: #b9c2cf; }
   .small-badge { background: #123d1f; color: #6ee7a0; border-radius: 6px; padding: 1px 6px; font-size: 11px; }
 </style>
 </head>
@@ -49,6 +49,7 @@
     <button id="start">Start</button>
     <button id="stop" class="sec">Stop</button>
     <button id="reset" class="danger">Reset queue</button>
+    <button id="reloadBrowser" class="sec">Force browser reload</button>
     <span class="grow"></span>
     <a class="btn sec" href="/agent.user.js">Install userscript</a>
   </div>
@@ -102,6 +103,11 @@
   <div class="card">
     <h2>Log</h2>
     <div id="log"></div>
+  </div>
+
+  <div class="card">
+    <h2>Browser log <a class="btn sec" href="/web.log?tail=200" target="_blank" style="float:right;font-size:12px;padding:4px 8px">raw</a></h2>
+    <div id="weblog"></div>
   </div>
 </main>
 <script src="/app.js"></script>

@@ -105,11 +105,10 @@ Queue build order per run:
 
 ## Userscript behavior (`@match https://*.indeed.com/*`)
 
-**Loader** (`agent.user.js`) is stable: it installs the console hook, fetches
-`/agent-core.js` with `no-store`, and runs it via
-`new Function("GM_xmlhttpRequest", "GM_getValue", "GM_setValue",
-"unsafeWindow", coreSrc)` so the core sees the same globals. It also polls
-`/livereload` every few seconds and calls `location.reload()` when
+**Loader** (`agent.user.js`) is stable: it fetches `/agent-core.js` with
+`no-store` and runs it via `new Function("GM_xmlhttpRequest", "GM_getValue",
+"GM_setValue", "unsafeWindow", coreSrc)` so the core sees the same globals. It
+also polls `/livereload` every few seconds and calls `location.reload()` when
 `reloadToken` or `coreHash` changes.
 
 **Core** (`agent-core.js`) dispatches by page type:
