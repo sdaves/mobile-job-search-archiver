@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Indeed Small Company Job Collector (loader)
 // @namespace    http://127.0.0.1:8000/
-// @version      0.2.0
+// @version      0.6.0
 // @description  Loads the live collector core from the local Termux jobs server
 // @match        https://*.indeed.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_addElement
 // @grant        unsafeWindow
 // @connect      127.0.0.1
 // @connect      localhost
@@ -67,7 +68,61 @@
     } catch {}
   }
 
-  function runDirect(coreSrc) {
+  // The core is fetched as text and executed with the GM_* globals. Indeed
+  // serves a CSP that blocks eval/new Function and inline page scripts, so the
+  // first strategy uses Tampermonkey's GM_addElement, which the extension
+  // injects through a privileged channel that bypasses the page CSP.
+  const RUN_MARK = "__jobsCoreRan_" + Date.now();
+
+  function coreWrapper(coreSrc) {
+    return (
+      "window." + RUN_MARK + "=1;" +
+      "(function(GM_xmlhttpRequest,GM_getValue,GM_setValue,unsafeWindow){" +
+      coreSrc +
+      "\n})(window.__jobsGm.xhr,window.__jobsGm.get,window.__jobsGm.set,window.__jobsGm.uw);"
+    );
+  }
+
+  function exposeGm() {
+    const w = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
+    w.__jobsGm = { xhr: GM_xmlhttpRequest, get: GM_getValue, set: GM_setValue, uw: unsafeWindow };
+    return w;
+  }
+
+  function pageWindow() {
+    return (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
+  }
+
+  function ranInPage() {
+    return !!pageWindow()[RUN_MARK];
+  }
+
+  function runCore(coreSrc) {
+    const src = coreWrapper(coreSrc);
+    const w = pageWindow();
+
+    // 1) GM_addElement inline script (bypasses page CSP in Tampermonkey).
+    if (typeof GM_addElement === "function") {
+      try {
+        exposeGm();
+        GM_addElement(document.head || document.documentElement, "script", {
+          textContent: src,
+        });
+        if (ranInPage()) return "GM_addElement";
+      } catch (e) {}
+    }
+
+    // 2) Plain inline page script.
+    try {
+      exposeGm();
+      const s = document.createElement("script");
+      s.textContent = src;
+      (document.head || document.documentElement).appendChild(s);
+      s.remove();
+      if (ranInPage()) return "inline-script";
+    } catch (e) {}
+
+    // 3) Sandbox new Function (works when Tampermonkey runs in its sandbox).
     const factory = new Function(
       "GM_xmlhttpRequest",
       "GM_getValue",
@@ -76,22 +131,7 @@
       coreSrc,
     );
     factory(GM_xmlhttpRequest, GM_getValue, GM_setValue, unsafeWindow);
-  }
-
-  function runViaPage(coreSrc) {
-    const w = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
-    w.__jobsCoreSrc = coreSrc;
-    w.__jobsCoreFn = { GM_xmlhttpRequest, GM_getValue, GM_setValue, unsafeWindow };
-    const s = document.createElement("script");
-    s.textContent =
-      "(function(){" +
-      "const w=window;" +
-      "const src=w.__jobsCoreSrc;const g=w.__jobsCoreFn;" +
-      "try{new Function('GM_xmlhttpRequest','GM_getValue','GM_setValue','unsafeWindow',src)" +
-      "(g.GM_xmlhttpRequest,g.GM_getValue,g.GM_setValue,g.unsafeWindow);}" +
-      "finally{try{delete w.__jobsCoreSrc;delete w.__jobsCoreFn;}catch(e){}}})();";
-    (document.head || document.documentElement).appendChild(s);
-    s.remove();
+    return "sandbox-newfunction";
   }
 
   async function boot() {
@@ -101,23 +141,12 @@
       return;
     }
     try {
-      runDirect(coreSrc);
-      return;
+      const via = runCore(coreSrc);
+      sendLog({ level: "info", src: "loader", url: location.href, msg: "core executed via " + via });
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
-      if (!/CSP|Function|eval/i.test(msg)) {
-        banner("agent-core error: " + msg, "#b3261e");
-        sendLog({ level: "error", src: "loader", url: location.href, msg: "agent-core eval failed: " + msg, stack: e && e.stack });
-        return;
-      }
-      sendLog({ level: "warn", src: "loader", url: location.href, msg: "new Function blocked, trying page-script injection: " + msg });
-    }
-    try {
-      runViaPage(coreSrc);
-    } catch (e) {
-      const msg = e && e.message ? e.message : String(e);
-      banner("agent-core inject error: " + msg, "#b3261e");
-      sendLog({ level: "error", src: "loader", url: location.href, msg: "page-script injection failed: " + msg, stack: e && e.stack });
+      banner("agent-core error: " + msg, "#b3261e");
+      sendLog({ level: "error", src: "loader", url: location.href, msg: "agent-core failed: " + msg, stack: e && e.stack });
     }
   }
 
