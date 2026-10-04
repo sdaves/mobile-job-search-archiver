@@ -204,6 +204,9 @@
     ) {
       return "search";
     }
+    // Indeed's mobile search landing (e.g. https://www.indeed.com/m/) has no
+    // query but is still a results page once it renders; treat it as search.
+    if (/^\/m\/?$/.test(path) || path === "/") return "search";
     if (document.querySelector("a[data-jk], a[href*='viewjob?jk='], a[href*='jk=']")) return "search";
     return "other";
   }
@@ -211,10 +214,16 @@
   function isChallenge() {
     const t = (document.title || "").toLowerCase();
     const b = (document.body ? document.body.innerText : "").slice(0, 2000).toLowerCase();
-    if (/just a moment|additional verification|checking your browser|attention required|verify you are human/.test(t + " " + b)) {
+    // Strong, unambiguous Cloudflare/interstitial signals only.
+    if (/just a moment|additional verification|attention required|verify you are human|unusual traffic|access denied/.test(t)) {
       return true;
     }
-    if (document.querySelector("#challenge-form, #cf-chl-widget, .cf-turnstile, [id*='captcha']")) return true;
+    if (/just a moment|additional verification|verify you are human|unusual traffic/.test(b) && !/indeed/i.test(t)) {
+      return true;
+    }
+    if (document.querySelector("#challenge-form, #cf-chl-widget, .cf-turnstile, iframe[src*='challenges.cloudflare.com']")) {
+      return true;
+    }
     return false;
   }
 
@@ -529,14 +538,55 @@
     setTimeout(() => location.assign(next.url), next.delayMs || 5000);
   }
 
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  // Wait for the page to finish rendering. Indeed is an SPA, so the initial
+  // HTML is a shell; scraping too early yields empty results and can look like
+  // a Cloudflare interstitial. Poll for expected content, then require any
+  // challenge to persist before acting on it.
+  async function waitForContent(type, maxMs) {
+    const deadline = Date.now() + (maxMs || 12000);
+    const hasSearchCards = () =>
+      document.querySelector("a[data-jk], a[href*='viewjob?jk='], .job_seen_beacon, [data-testid='slider_item'], li .jobTitle") ||
+      (W._initialData && W._initialData.jobKeys) ||
+      W.mosaic;
+    const hasJobContent = () =>
+      document.querySelector("#jobDescriptionText, .jobsearch-JobComponent-description, [data-testid='jobDescriptionText']") ||
+      (W._initialData && W._initialData.jobInfo) ||
+      document.querySelector("[data-testid='inlineHeader-companyName']");
+    const hasCompanyContent = () => /employees/i.test(document.body ? document.body.innerText : "");
+    while (Date.now() < deadline) {
+      const ok =
+        (type === "search" && hasSearchCards()) ||
+        (type === "job" && hasJobContent()) ||
+        (type === "company" && hasCompanyContent());
+      if (ok) return true;
+      await sleep(300);
+    }
+    return false;
+  }
+
+  async function detectChallengeStable() {
+    // A challenge must persist for a couple of seconds to count; transient
+    // SPA states can otherwise false-positive.
+    if (!isChallenge()) return false;
+    await sleep(2000);
+    return isChallenge();
+  }
+
   async function run() {
-    if (isChallenge()) {
+    if (await detectChallengeStable()) {
       log("warn", "cloudflare challenge detected", diagSearch());
       await post("/ingest", { kind: "status", challenge: true, reason: "cloudflare-challenge" });
       banner("Cloudflare check detected. Solve it, then press Start again.", "#b06000");
       return;
     }
     const type = pageType();
+    if (type === "search" || type === "job" || type === "company") {
+      await waitForContent(type);
+    }
     log("info", `page type=${type}`, { url: location.href, title: document.title.slice(0, 120) });
     try {
       if (type === "job") {
