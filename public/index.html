@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>jobs — Indeed small-company collector</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #0f1115; color: #e6e8eb; }
+  header { padding: 14px 16px; background: #161a22; border-bottom: 1px solid #232936; position: sticky; top: 0; }
+  h1 { font-size: 17px; margin: 0 0 8px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .grow { flex: 1 1 220px; }
+  main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+  .card { background: #161a22; border: 1px solid #232936; border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #9aa4b2; margin: 0 0 10px; }
+  button, .btn { background: #2a6cf0; color: #fff; border: 0; border-radius: 8px; padding: 9px 14px; font-size: 14px; cursor: pointer; text-decoration: none; display: inline-block; }
+  button.sec { background: #2b3140; }
+  button.danger { background: #b3261e; }
+  button:disabled { opacity: .5; cursor: default; }
+  input, textarea { background: #0f131a; color: #e6e8eb; border: 1px solid #2c3342; border-radius: 8px; padding: 8px 10px; font: inherit; width: 100%; }
+  textarea { min-height: 96px; font-family: ui-monospace, monospace; font-size: 13px; }
+  label { font-size: 12px; color: #9aa4b2; display: block; margin-bottom: 4px; }
+  .pill { border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; }
+  .pill.on { background: #123d1f; color: #6ee7a0; }
+  .pill.off { background: #3a2020; color: #ffb4ab; }
+  .pill.warn { background: #3d3212; color: #ffd76e; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+  .stat { background: #0f131a; border: 1px solid #232936; border-radius: 8px; padding: 10px; }
+  .stat b { display: block; font-size: 20px; }
+  .stat span { font-size: 11px; color: #9aa4b2; text-transform: uppercase; }
+  progress { width: 100%; height: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #232936; vertical-align: top; }
+  th { color: #9aa4b2; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  a { color: #7db0ff; }
+  .muted { color: #9aa4b2; font-size: 12px; }
+  #log { font-family: ui-monospace, monospace; font-size: 12px; max-height: 220px; overflow: auto; white-space: pre-wrap; color: #b9c2cf; }
+  .small-badge { background: #123d1f; color: #6ee7a0; border-radius: 6px; padding: 1px 6px; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>jobs — Indeed small-company collector</h1>
+  <div class="row">
+    <span id="status" class="pill off">stopped</span>
+    <span id="pause" class="muted"></span>
+    <button id="start">Start</button>
+    <button id="stop" class="sec">Stop</button>
+    <button id="reset" class="danger">Reset queue</button>
+    <span class="grow"></span>
+    <a class="btn sec" href="/agent.user.js">Install userscript</a>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <h2>Run</h2>
+    <div class="row" style="margin-bottom:10px">
+      <div style="flex:1 1 100%">
+        <label>Budget used (<span id="usedLabel">0:00</span> / <span id="budgetLabel">5:00</span>)</label>
+        <progress id="budgetBar" max="300" value="0"></progress>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="sQueue">0</b><span>queue</span></div>
+      <div class="stat"><b id="sPages">0</b><span>pages this run</span></div>
+      <div class="stat"><b id="sSearches">0</b><span>searches</span></div>
+      <div class="stat"><b id="sJobs">0</b><span>job records</span></div>
+      <div class="stat"><b id="sCompanies">0</b><span>companies</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Search terms (remote)</h2>
+    <textarea id="terms"></textarea>
+    <div class="row" style="margin-top:10px">
+      <div style="flex:1 1 100px"><label>Budget (min)</label><input id="budget" type="number" min="1" max="60" /></div>
+      <div style="flex:1 1 100px"><label>Max pages/run</label><input id="maxPages" type="number" min="1" max="500" /></div>
+      <div style="flex:1 1 100px"><label>Delay min (ms)</label><input id="delayMin" type="number" min="500" step="500" /></div>
+      <div style="flex:1 1 100px"><label>Delay max (ms)</label><input id="delayMax" type="number" min="500" step="500" /></div>
+      <button id="save">Save settings</button>
+    </div>
+    <p class="muted">Queue is built from terms on Start when empty. Each term → one Indeed search, then discovered jobs, then company pages.</p>
+  </div>
+
+  <div class="card">
+    <h2>Export / resume data</h2>
+    <div class="row">
+      <a class="btn" href="/export.json" target="_blank">export.json</a>
+      <a class="btn" href="/export.md" target="_blank">export.md</a>
+      <a class="btn" href="/export.csv" target="_blank">export.csv</a>
+      <button id="reload" class="sec">Reload listings</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Recent listings</h2>
+    <div style="overflow:auto"><table id="listings"><thead><tr><th>Title</th><th>Company</th><th>Size</th><th>Salary</th><th>Location</th></tr></thead><tbody></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </div>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>
