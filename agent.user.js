@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Indeed Small Company Job Collector (loader)
 // @namespace    http://127.0.0.1:8000/
-// @version      0.3.0
+// @version      0.4.0
 // @description  Loads the live collector core from the local Termux jobs server
 // @match        https://*.indeed.com/*
 // @grant        GM_xmlhttpRequest
@@ -73,68 +73,54 @@
     return (
       "(function(GM_xmlhttpRequest,GM_getValue,GM_setValue,unsafeWindow){" +
       coreSrc +
-      "\n})(__jobsGm.xhr,__jobsGm.get,__jobsGm.set,__jobsGm.uw);"
+      "\n})(window.__jobsGm.xhr,window.__jobsGm.get,window.__jobsGm.set,window.__jobsGm.uw);"
     );
   }
 
-  // The core is fetched as text and executed with the GM_* globals. Several
-  // execution strategies are tried because Indeed's CSP can block the
-  // obvious ones; the first that runs wins.
+  function pageWindow() {
+    return (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
+  }
+
+  // Indeed's CSP blocks eval/new Function in page context. GM_addElement with
+  // an inline textContent script is injected by Tampermonkey through the
+  // extension's privileged channel, which bypasses page CSP. The GM_* functions
+  // are exposed on the page window so the injected core can reach them.
   function runCore(coreSrc) {
-    const strategies = [];
+    const w = pageWindow();
+    w.__jobsGm = { xhr: GM_xmlhttpRequest, get: GM_getValue, set: GM_setValue, uw: unsafeWindow };
+    const src = boundCore(coreSrc);
 
-    // 1) Tampermonkey sandbox eval (works when @sandbox is JavaScript).
-    strategies.push(() => (0, eval)(boundCore(coreSrc)));
-
-    // 2) Blob URL via GM_addElement (Tampermonkey bypasses page CSP here).
-    strategies.push(() => {
-      const g = { xhr: GM_xmlhttpRequest, get: GM_getValue, set: GM_setValue, uw: unsafeWindow };
-      const w = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
-      w.__jobsGm = g;
-      const blob = new Blob([boundCore(coreSrc)], { type: "text/javascript" });
-      const url = URL.createObjectURL(blob);
-      if (typeof GM_addElement === "function") {
-        GM_addElement(document.head || document.documentElement, "script", { src: url });
-      } else {
-        const s = document.createElement("script");
-        s.src = url;
-        (document.head || document.documentElement).appendChild(s);
-      }
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
-    });
-
-    // 3) new Function in the sandbox.
-    strategies.push(() => {
-      const factory = new Function(
-        "GM_xmlhttpRequest",
-        "GM_getValue",
-        "GM_setValue",
-        "unsafeWindow",
-        coreSrc,
-      );
-      factory(GM_xmlhttpRequest, GM_getValue, GM_setValue, unsafeWindow);
-    });
-
-    let lastErr = null;
-    for (const fn of strategies) {
-      try {
-        fn();
-        return true;
-      } catch (e) {
-        lastErr = e;
-      }
+    if (typeof GM_addElement === "function") {
+      GM_addElement(document.head || document.documentElement, "script", {
+        textContent: src,
+      });
+      return true;
     }
-    throw lastErr || new Error("all execution strategies failed");
+    const s = document.createElement("script");
+    s.textContent = src;
+    (document.head || document.documentElement).appendChild(s);
+    s.remove();
+    return true;
   }
 
   async function boot() {
+    sendLog({
+      level: "info",
+      src: "loader",
+      url: location.href,
+      msg: "loader v0.4.0 alive; ctx=" +
+        (typeof GM_addElement === "function" ? "GM_addElement" : "no-GM_addElement") +
+        " sandbox=" + (typeof unsafeWindow !== "undefined" ? "yes" : "no"),
+    });
     const coreSrc = await getText("/agent-core.js?t=" + Date.now());
     if (!coreSrc) {
       banner("Could not load agent-core.js from " + BASE, "#b06000");
+      sendLog({ level: "error", src: "loader", url: location.href, msg: "could not fetch agent-core.js" });
       return;
     }
     try {
       runCore(coreSrc);
+      sendLog({ level: "info", src: "loader", url: location.href, msg: "core executed OK" });
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
       banner("agent-core error: " + msg, "#b3261e");
