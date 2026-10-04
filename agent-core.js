@@ -550,8 +550,7 @@
     const deadline = Date.now() + (maxMs || 12000);
     const hasSearchCards = () =>
       document.querySelector("a[data-jk], a[href*='viewjob?jk='], .job_seen_beacon, [data-testid='slider_item'], li .jobTitle") ||
-      (W._initialData && W._initialData.jobKeys) ||
-      W.mosaic;
+      (W._initialData && (W._initialData.jobKeys || W._initialData.jobs));
     const hasJobContent = () =>
       document.querySelector("#jobDescriptionText, .jobsearch-JobComponent-description, [data-testid='jobDescriptionText']") ||
       (W._initialData && W._initialData.jobInfo) ||
