@@ -798,6 +798,11 @@ const server = Bun.serve({
         headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" },
       });
     }
+    if (p === "/ping.html" || p === "/ping") {
+      return new Response(Bun.file(join(PUBLIC, "ping.html")), {
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+      });
+    }
     if (p === "/app.js") {
       return new Response(Bun.file(join(PUBLIC, "app.js")), {
         headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" },

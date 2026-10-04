@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>jobs — transport test</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; background: #0f1115; color: #e6e8eb; margin: 0; padding: 20px; }
+  h1 { font-size: 18px; }
+  button { background: #2a6cf0; color: #fff; border: 0; border-radius: 8px; padding: 12px 18px; font-size: 16px; }
+  pre { background: #0f131a; border: 1px solid #232936; border-radius: 8px; padding: 12px; white-space: pre-wrap; }
+  a { color: #7db0ff; }
+</style>
+</head>
+<body>
+<h1>jobs — transport test</h1>
+<p>Run this on any page to check the browser → <code>127.0.0.1:8000</code> channel.</p>
+<button id="run">Run test</button>
+<pre id="out">idle</pre>
+<script>
+async function test() {
+  const out = document.getElementById("out");
+  const log = [];
+  try {
+    const r = await fetch("/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ level: "info", src: "page", url: location.href, msg: "transport test from " + location.host }),
+    });
+    log.push("POST /log -> HTTP " + r.status);
+  } catch (e) {
+    log.push("POST /log FAILED: " + e);
+  }
+  try {
+    const r2 = await fetch("/livereload");
+    log.push("GET /livereload -> HTTP " + r2.status + " " + (await r2.text()));
+  } catch (e) {
+    log.push("GET /livereload FAILED: " + e);
+  }
+  out.textContent = log.join("\n");
+}
+document.getElementById("run").onclick = test;
+</script>
+</body>
+</html>
