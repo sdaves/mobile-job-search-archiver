@@ -57,6 +57,10 @@
     }
   }
 
+  async function report(detail) {
+    await post("/ingest", { kind: "status", note: detail });
+  }
+
   // ---------- ui ----------
   function banner(text, color) {
     let el = document.getElementById("jobs-collector-banner");
@@ -76,15 +80,19 @@
   function pageType() {
     const path = location.pathname;
     const params = new URLSearchParams(location.search);
-    if (/\/viewjob/.test(path) || params.get("vjk") || params.get("jk")) {
-      if (/\/viewjob/.test(path) || /indeed\.com\/(rc|pagead)/.test(location.href) === false) {
-        if (/\/viewjob/.test(path)) return "job";
-      }
+    if (/\/viewjob/.test(path) || /\/rc\/clk/.test(path) || params.get("vjk") || params.get("jk")) {
+      return "job";
     }
-    if (/\/cmp(\/|$)/.test(path)) return "company";
-    if (/\/jobs/.test(path) || /\/q-/.test(path) || /\/m\/jobs/.test(path)) return "search";
-    // fall back on content
-    if (document.querySelector("a[data-jk], a[href*='viewjob?jk=']")) return "search";
+    if (/\/cmp(\/|$)/.test(path) || /\/companies\//.test(path)) return "company";
+    if (
+      /\/jobs(\/|$)/.test(path) ||
+      /\/m\/jobs/.test(path) ||
+      /\/q-/.test(path) ||
+      params.has("q")
+    ) {
+      return "search";
+    }
+    if (document.querySelector("a[data-jk], a[href*='viewjob?jk='], a[href*='jk=']")) return "search";
     return "other";
   }
 
@@ -396,22 +404,30 @@
       if (type === "job") {
         const rec = scrapeJob();
         await post("/ingest", rec);
+        await report(`job ${rec.jk} "${rec.title}" @ ${rec.company} attrs=${rec.description_html ? rec.description_html.length : 0}`);
       } else if (type === "search") {
         const term = (new URLSearchParams(location.search).get("q") || "").trim();
+        let via = "json";
         let jobs = scrapeSearchJson();
-        if (!jobs || !jobs.length) jobs = scrapeSearchDom();
+        if (!jobs || !jobs.length) {
+          via = "dom";
+          jobs = scrapeSearchDom();
+        }
         await post("/ingest", { kind: "search", term, jobs });
+        await report(`search "${term}" via=${via} found=${jobs.length} title="${document.title.slice(0, 50)}"`);
       } else if (type === "company") {
         const rec = scrapeCompany();
         await post("/ingest", rec);
+        await report(`company "${rec.name}" size=${rec.size_raw}`);
       } else {
-        // not a page we handle; just ask for the next task
+        await report(`unhandled page type=${type} url=${location.href.slice(0, 80)}`);
       }
     } catch (e) {
-      await post("/ingest", { kind: "status", note: "scrape-error", detail: String(e) });
+      await post("/ingest", { kind: "status", note: "scrape-error " + String(e) });
     }
     await advance();
   }
 
   run();
 })();
+

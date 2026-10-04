@@ -461,6 +461,8 @@ async function handleIngest(req: Request) {
       _state.paused = false;
       _state.pauseReason = undefined;
       addLog("resumed");
+    } else if (body.note) {
+      addLog(`agent: ${body.note}`);
     }
     saveState();
     broadcast();
