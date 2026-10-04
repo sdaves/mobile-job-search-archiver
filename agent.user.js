@@ -1,17 +1,19 @@
 // ==UserScript==
 // @name         Indeed Small Company Job Collector (loader)
 // @namespace    http://127.0.0.1:8000/
-// @version      0.5.1
+// @version      0.5.2
 // @description  Loads the live collector core from the local Termux jobs server
 // @match        https://*.indeed.com/*
+// @match        https://indeed.com/*
+// @match        https://*.indeed.com/m/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        unsafeWindow
 // @connect      127.0.0.1
 // @connect      localhost
-// @run-at       document-idle
-// @noframes
+// @connect      *
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
@@ -94,32 +96,48 @@
     s.remove();
   }
 
+  function whenDomReady(fn) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", fn, { once: true });
+    } else {
+      fn();
+    }
+  }
+
   async function boot() {
-    sendLog({ level: "info", src: "loader", url: location.href, msg: "loader v0.5.1 alive" });
+    // Ping first so the dashboard always shows the loader is alive, even if the
+    // core later fails.
+    sendLog({
+      level: "info",
+      src: "loader",
+      url: location.href,
+      msg: "loader v0.5.2 alive; readyState=" + document.readyState,
+    });
     const coreSrc = await getText("/agent-core.js?t=" + Date.now());
     if (!coreSrc) {
       banner("Could not load agent-core.js from " + BASE, "#b06000");
       sendLog({ level: "error", src: "loader", url: location.href, msg: "could not fetch agent-core.js" });
       return;
     }
-    // Page-script injection is the proven path on Firefox Android (Indeed's
-    // CSP blocks new Function in the userscript sandbox). Try it first.
-    try {
-      runViaPage(coreSrc);
-      sendLog({ level: "info", src: "loader", url: location.href, msg: "core injected via page script" });
-      return;
-    } catch (e) {
-      const msg = e && e.message ? e.message : String(e);
-      sendLog({ level: "warn", src: "loader", url: location.href, msg: "page-script injection failed, trying direct: " + msg });
-    }
-    try {
-      runDirect(coreSrc);
-      sendLog({ level: "info", src: "loader", url: location.href, msg: "core executed directly" });
-    } catch (e) {
-      const msg = e && e.message ? e.message : String(e);
-      banner("agent-core error: " + msg, "#b3261e");
-      sendLog({ level: "error", src: "loader", url: location.href, msg: "agent-core eval failed: " + msg, stack: e && e.stack });
-    }
+    // The core needs the DOM, so run it once the page has parsed.
+    whenDomReady(() => {
+      try {
+        runViaPage(coreSrc);
+        sendLog({ level: "info", src: "loader", url: location.href, msg: "core injected via page script" });
+        return;
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        sendLog({ level: "warn", src: "loader", url: location.href, msg: "page-script injection failed, trying direct: " + msg });
+      }
+      try {
+        runDirect(coreSrc);
+        sendLog({ level: "info", src: "loader", url: location.href, msg: "core executed directly" });
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        banner("agent-core error: " + msg, "#b3261e");
+        sendLog({ level: "error", src: "loader", url: location.href, msg: "agent-core eval failed: " + msg, stack: e && e.stack });
+      }
+    });
   }
 
   let lastToken = null;
