@@ -71,7 +71,12 @@ async function loadListings() {
     for (const j of rows) {
       if (!j.jk) continue;
       const prev = byJk.get(j.jk) || {};
-      byJk.set(j.jk, { ...prev, ...j, description_html: j.description_html || prev.description_html });
+      byJk.set(j.jk, {
+        ...prev,
+        ...j,
+        description_html: j.description_html || prev.description_html,
+        description_snippet: j.description_snippet || prev.description_snippet,
+      });
     }
     const list = [...byJk.values()].reverse().slice(0, 50);
     const tb = $("listings").querySelector("tbody");
@@ -79,7 +84,13 @@ async function loadListings() {
     for (const j of list) {
       const tr = document.createElement("tr");
       const size = j.size_raw ? `<span class="small-badge">${escapeHtml(j.size_raw)}</span>` : "";
-      tr.innerHTML = `<td>${escapeHtml(j.title || "")}</td><td>${escapeHtml(j.company || "")}</td><td>${size}</td><td>${escapeHtml(j.salary_raw || "")}</td><td>${escapeHtml(j.location || "")}</td>`;
+      const hasFull = j.description_html && j.description_html.length > 0;
+      const desc = hasFull
+        ? '<span class="small-badge">desc</span>'
+        : j.description_snippet
+          ? '<span class="muted">snippet</span>'
+          : '<span class="muted">—</span>';
+      tr.innerHTML = `<td>${escapeHtml(j.title || "")}</td><td>${escapeHtml(j.company || "")}</td><td>${size}</td><td>${desc}</td><td>${escapeHtml(j.salary_raw || "")}</td><td>${escapeHtml(j.location || "")}</td>`;
       tb.appendChild(tr);
     }
   } catch {}

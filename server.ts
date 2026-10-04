@@ -426,7 +426,10 @@ function buildExport() {
   for (const j of byJk.values()) {
     const c = cMap.get(norm(j.company)) || null;
     const sal = parseSalary(j.salary_raw || "");
-    const descText = stripHtml(j.description_html || "");
+    const hasFullDesc = !!(j.description_html && String(j.description_html).length > 0);
+    const descText = hasFullDesc
+      ? stripHtml(j.description_html)
+      : stripHtml(j.description_snippet || j.description || "");
     const small =
       c && c.size_min != null && c.size_max != null
         ? c.size_min >= 1 && c.size_max <= 50
@@ -449,6 +452,7 @@ function buildExport() {
       url: j.url || "",
       apply_url: j.apply_url || "",
       description: descText,
+      description_full: hasFullDesc,
       seniority: extractSeniority(j.title || ""),
       tech_tags: extractTags(`${j.title || ""} ${descText}`),
       notes: "",
@@ -467,7 +471,8 @@ function toCsv(rows: any[]) {
     "title", "company", "company_size", "small_company", "salary_raw",
     "salary_min", "salary_max", "salary_currency", "salary_period",
     "salary_annual_max", "location", "remote", "employment_type",
-    "date_posted", "url", "apply_url", "seniority", "tech_tags", "notes",
+    "date_posted", "url", "apply_url", "description_full", "seniority",
+    "tech_tags", "notes",
   ];
   const esc = (v: any) => {
     let s = Array.isArray(v) ? v.join("; ") : v == null ? "" : String(v);
@@ -495,7 +500,10 @@ function toMarkdown(rows: any[]) {
     if (r.tech_tags?.length) lines.push(`- Tags: ${r.tech_tags.join(", ")}`);
     lines.push(`- URL: ${r.url}`);
     if (r.apply_url && r.apply_url !== r.url) lines.push(`- Apply: ${r.apply_url}`);
-    if (r.description) lines.push("", r.description.slice(0, 1200));
+    if (r.description) {
+      lines.push(`- Description: ${r.description_full ? "full" : "snippet only"}`);
+      lines.push("", r.description.slice(0, 1200));
+    }
     lines.push("");
   }
   return lines.join("\n");
@@ -615,6 +623,7 @@ async function handleIngest(req: Request) {
 
   if (kind === "search") {
     const jobs = Array.isArray(body.jobs) ? body.jobs : [];
+    const fresh: Task[] = [];
     let added = 0;
     for (const j of jobs) {
       if (!j.jk) continue;
@@ -627,12 +636,16 @@ async function handleIngest(req: Request) {
         _state.seenJobs[key] = mergedSeen(_state.seenJobs[key], f);
       }
       if (j.url) {
-        _state.queue.push({ type: "job", url: toMobileUrl(j.url), jk: key, company: j.company });
+        fresh.push({ type: "job", url: toMobileUrl(j.url), jk: key, company: j.company });
       }
       added++;
     }
+    // Interleave: visit the freshly discovered job pages next, before more
+    // searches, so the daily budget captures full descriptions rather than
+    // piling up unvisited search stubs. Front of queue, result order preserved.
+    _state.queue.unshift(...fresh);
     _state.stats.searches++;
-    addLog(`search "${body.term || ""}": +${added} jobs (queue ${_state.queue.length})`);
+    addLog(`search "${body.term || ""}": +${added} jobs, ${fresh.length} queued for detail (queue ${_state.queue.length})`);
   } else if (kind === "job") {
     const key = body.jk ? String(body.jk) : "";
     const f = seenFlags(body);
