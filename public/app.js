@@ -113,6 +113,110 @@ async function loadWebLog() {
   } catch {}
 }
 
+let mermaidLoading = null;
+function loadMermaid() {
+  if (window.mermaid) return Promise.resolve(window.mermaid);
+  if (mermaidLoading) return mermaidLoading;
+  mermaidLoading = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "/mermaid.min.js";
+    s.async = true;
+    s.onload = () => {
+      try {
+        window.mermaid.initialize({
+          startOnLoad: false,
+          theme: "dark",
+          securityLevel: "loose",
+          c4: {
+            useMaxWidth: false,
+            c4ShapeInRow: 2,
+            c4BoundaryInRow: 1,
+            c4ShapeMargin: 80,
+            diagramMarginX: 60,
+            diagramMarginY: 20,
+          },
+          flowchart: { useMaxWidth: false },
+          sequence: { useMaxWidth: false },
+          class: { useMaxWidth: false },
+        });
+      } catch {}
+      resolve(window.mermaid);
+    };
+    s.onerror = () => reject(new Error("mermaid load failed"));
+    document.head.appendChild(s);
+  });
+  return mermaidLoading;
+}
+
+async function renderMermaid(root) {
+  const blocks = root.querySelectorAll("pre > code.language-mermaid");
+  if (!blocks.length) return;
+  let mermaid;
+  try {
+    mermaid = await loadMermaid();
+  } catch {
+    return;
+  }
+  const nodes = [];
+  for (const code of blocks) {
+    const div = document.createElement("div");
+    div.className = "mermaid";
+    div.textContent = code.textContent;
+    code.parentElement.replaceWith(div);
+    nodes.push(div);
+  }
+  try {
+    await mermaid.run({ nodes, suppressErrors: true });
+  } catch (e) {
+    if (window.console) console.warn("mermaid render failed", e);
+  }
+}
+
+async function loadDoc(name) {
+  const view = $("docView");
+  const status = $("docStatus");
+  if (!view) return;
+  view.innerHTML = '<p class="muted">Loading ' + escapeHtml(name) + "…</p>";
+  if (status) status.textContent = name;
+  try {
+    const r = await fetch("/docs/content?name=" + encodeURIComponent(name), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    view.innerHTML = data.html || '<p class="muted">empty</p>';
+    renderMermaid(view);
+  } catch {
+    view.innerHTML = '<p class="muted">Could not load ' + escapeHtml(name) + "</p>";
+  }
+}
+
+async function loadDocs() {
+  const sel = $("docSelect");
+  if (!sel) return;
+  try {
+    const r = await fetch("/docs", { cache: "no-store" });
+    const data = await r.json();
+    const files = data.files || [];
+    sel.innerHTML = "";
+    if (!files.length) {
+      if ($("docStatus")) $("docStatus").textContent = "no .md files found";
+      return;
+    }
+    for (const f of files) {
+      const o = document.createElement("option");
+      o.value = f;
+      o.textContent = f;
+      sel.appendChild(o);
+    }
+    const preferred = files.find((f) => f.toLowerCase() === "readme.md");
+    sel.value = preferred || files[0];
+    await loadDoc(sel.value);
+  } catch {
+    if ($("docStatus")) $("docStatus").textContent = "could not list docs";
+  }
+}
+
+$("docSelect").onchange = (e) => loadDoc(e.target.value);
+
 function connect() {
   const es = new EventSource("/events");
   es.onmessage = (e) => {
@@ -129,5 +233,6 @@ function connect() {
 connect();
 loadListings();
 loadWebLog();
+loadDocs();
 setInterval(loadListings, 15000);
 setInterval(loadWebLog, 4000);

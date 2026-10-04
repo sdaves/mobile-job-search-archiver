@@ -38,6 +38,24 @@
   .muted { color: #9aa4b2; font-size: 12px; }
   #log, #weblog { font-family: ui-monospace, monospace; font-size: 12px; max-height: 220px; overflow: auto; white-space: pre-wrap; color: #b9c2cf; }
   .small-badge { background: #123d1f; color: #6ee7a0; border-radius: 6px; padding: 1px 6px; font-size: 11px; }
+  .md { font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+  .md h1, .md h2, .md h3, .md h4 { line-height: 1.25; margin: 1.1em 0 .5em; }
+  .md h1 { font-size: 1.5em; border-bottom: 1px solid #232936; padding-bottom: .3em; }
+  .md h2 { font-size: 1.25em; border-bottom: 1px solid #232936; padding-bottom: .25em; }
+  .md h3 { font-size: 1.05em; }
+  .md p, .md ul, .md ol, .md blockquote { margin: .6em 0; }
+  .md code { background: #0f131a; border: 1px solid #232936; border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, monospace; font-size: .9em; }
+  .md pre { background: #0f131a; border: 1px solid #232936; border-radius: 8px; padding: 12px; overflow: auto; }
+  .md pre code { background: none; border: 0; padding: 0; }
+  .md table { border-collapse: collapse; width: 100%; font-size: 13px; display: block; overflow-x: auto; }
+  .md th, .md td { border: 1px solid #232936; padding: 6px 8px; text-align: left; }
+  .md blockquote { border-left: 3px solid #2a6cf0; margin-left: 0; padding-left: 12px; color: #b9c2cf; }
+  .md a { color: #7db0ff; }
+  .md img { max-width: 100%; }
+  .md hr { border: 0; border-top: 1px solid #232936; margin: 1.2em 0; }
+  .md .mermaid { background: #0f131a; border: 1px solid #232936; border-radius: 8px; padding: 12px; margin: .8em 0; overflow-x: auto; }
+  .md .mermaid svg { height: auto; }
+  select { background: #0f131a; color: #e6e8eb; border: 1px solid #2c3342; border-radius: 8px; padding: 8px 10px; font: inherit; }
 </style>
 </head>
 <body>
@@ -108,6 +126,15 @@
   <div class="card">
     <h2>Browser log <a class="btn sec" href="/web.log?tail=200" target="_blank" style="float:right;font-size:12px;padding:4px 8px">raw</a></h2>
     <div id="weblog"></div>
+  </div>
+
+  <div class="card">
+    <h2>Documentation</h2>
+    <div class="row" style="margin-bottom:10px">
+      <select id="docSelect" style="max-width:340px"></select>
+      <span id="docStatus" class="muted"></span>
+    </div>
+    <div id="docView" class="md"></div>
   </div>
 </main>
 <script src="/app.js"></script>

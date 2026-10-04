@@ -8,6 +8,7 @@ import {
   writeFileSync,
   statSync,
   renameSync,
+  readdirSync,
 } from "fs";
 
 const ROOT = import.meta.dir;
@@ -202,6 +203,20 @@ function mergedSeen(prev: SeenJob | undefined, f: SeenJob): SeenJob {
     salary: (prev?.salary || false) || f.salary,
     company: (prev?.company || false) || f.company,
   };
+}
+
+function listMarkdown() {
+  try {
+    return readdirSync(ROOT)
+      .filter((f) => f.toLowerCase().endsWith(".md"))
+      .sort((a, b) => {
+        const ra = a.toLowerCase() === "readme.md" ? 0 : 1;
+        const rb = b.toLowerCase() === "readme.md" ? 0 : 1;
+        return ra - rb || a.localeCompare(b);
+      });
+  } catch {
+    return [];
+  }
 }
 
 function fileHash(file: string) {
@@ -709,7 +724,19 @@ const server = Bun.serve({
     if (p === "/" || p === "/index.html") {
       return new Response(Bun.file(join(PUBLIC, "index.html")));
     }
-    if (p === "/app.js") return new Response(Bun.file(join(PUBLIC, "app.js")));
+    if (p === "/app.js") {
+      return new Response(Bun.file(join(PUBLIC, "app.js")), {
+        headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" },
+      });
+    }
+    if (p === "/mermaid.min.js") {
+      return new Response(Bun.file(join(PUBLIC, "mermaid.min.js")), {
+        headers: {
+          "Content-Type": "text/javascript; charset=utf-8",
+          "Cache-Control": "public, max-age=86400",
+        },
+      });
+    }
     if (p === "/agent.user.js") {
       return new Response(Bun.file(LOADER_FILE), {
         headers: {
@@ -800,6 +827,22 @@ const server = Bun.serve({
       const md = toMarkdown(rows);
       writeFileSync(join(DATA, "export.md"), md);
       return new Response(md, { headers: { "Content-Type": "text/markdown; charset=utf-8", ...CORS } });
+    }
+
+    if (p === "/docs") {
+      return json({ files: listMarkdown() });
+    }
+    if (p === "/docs/content") {
+      const name = url.searchParams.get("name") || "";
+      const isSafe =
+        name &&
+        name.toLowerCase().endsWith(".md") &&
+        name === name.split(/[\\/]/).pop();
+      if (!isSafe) return json({ ok: false, error: "invalid name" }, 400);
+      if (!listMarkdown().includes(name)) return json({ ok: false, error: "not found" }, 404);
+      const src = readFileSync(join(ROOT, name), "utf8");
+      const html = (Bun as any).markdown.html(src, { tables: true, autolinks: true, strikethrough: true });
+      return json({ ok: true, name, html });
     }
 
     return new Response("not found", { status: 404 });
