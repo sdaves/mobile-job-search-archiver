@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         Indeed Small Company Job Collector (loader)
 // @namespace    http://127.0.0.1:8000/
-// @version      0.2.0
+// @version      0.3.0
 // @description  Loads the live collector core from the local Termux jobs server
 // @match        https://*.indeed.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_addElement
 // @grant        unsafeWindow
+// @sandbox      JavaScript
 // @connect      127.0.0.1
 // @connect      localhost
 // @run-at       document-idle
@@ -67,17 +69,62 @@
     } catch {}
   }
 
-  function makeFactory(coreSrc) {
-    const wrapper =
+  function boundCore(coreSrc) {
+    return (
       "(function(GM_xmlhttpRequest,GM_getValue,GM_setValue,unsafeWindow){" +
       coreSrc +
-      "\n})";
-    return (0, eval)(wrapper);
+      "\n})(__jobsGm.xhr,__jobsGm.get,__jobsGm.set,__jobsGm.uw);"
+    );
   }
 
-  function runDirect(coreSrc) {
-    const factory = makeFactory(coreSrc);
-    factory(GM_xmlhttpRequest, GM_getValue, GM_setValue, unsafeWindow);
+  // The core is fetched as text and executed with the GM_* globals. Several
+  // execution strategies are tried because Indeed's CSP can block the
+  // obvious ones; the first that runs wins.
+  function runCore(coreSrc) {
+    const strategies = [];
+
+    // 1) Tampermonkey sandbox eval (works when @sandbox is JavaScript).
+    strategies.push(() => (0, eval)(boundCore(coreSrc)));
+
+    // 2) Blob URL via GM_addElement (Tampermonkey bypasses page CSP here).
+    strategies.push(() => {
+      const g = { xhr: GM_xmlhttpRequest, get: GM_getValue, set: GM_setValue, uw: unsafeWindow };
+      const w = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
+      w.__jobsGm = g;
+      const blob = new Blob([boundCore(coreSrc)], { type: "text/javascript" });
+      const url = URL.createObjectURL(blob);
+      if (typeof GM_addElement === "function") {
+        GM_addElement(document.head || document.documentElement, "script", { src: url });
+      } else {
+        const s = document.createElement("script");
+        s.src = url;
+        (document.head || document.documentElement).appendChild(s);
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    });
+
+    // 3) new Function in the sandbox.
+    strategies.push(() => {
+      const factory = new Function(
+        "GM_xmlhttpRequest",
+        "GM_getValue",
+        "GM_setValue",
+        "unsafeWindow",
+        coreSrc,
+      );
+      factory(GM_xmlhttpRequest, GM_getValue, GM_setValue, unsafeWindow);
+    });
+
+    let lastErr = null;
+    for (const fn of strategies) {
+      try {
+        fn();
+        return true;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error("all execution strategies failed");
   }
 
   async function boot() {
@@ -87,7 +134,7 @@
       return;
     }
     try {
-      runDirect(coreSrc);
+      runCore(coreSrc);
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
       banner("agent-core error: " + msg, "#b3261e");
