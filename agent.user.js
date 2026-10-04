@@ -1,19 +1,17 @@
 // ==UserScript==
 // @name         Indeed Small Company Job Collector (loader)
 // @namespace    http://127.0.0.1:8000/
-// @version      0.5.2
+// @version      0.2.0
 // @description  Loads the live collector core from the local Termux jobs server
 // @match        https://*.indeed.com/*
-// @match        https://indeed.com/*
-// @match        https://*.indeed.com/m/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        unsafeWindow
 // @connect      127.0.0.1
 // @connect      localhost
-// @connect      *
-// @run-at       document-start
+// @run-at       document-idle
+// @noframes
 // ==/UserScript==
 
 (function () {
@@ -96,48 +94,31 @@
     s.remove();
   }
 
-  function whenDomReady(fn) {
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", fn, { once: true });
-    } else {
-      fn();
-    }
-  }
-
   async function boot() {
-    // Ping first so the dashboard always shows the loader is alive, even if the
-    // core later fails.
-    sendLog({
-      level: "info",
-      src: "loader",
-      url: location.href,
-      msg: "loader v0.5.2 alive; readyState=" + document.readyState,
-    });
     const coreSrc = await getText("/agent-core.js?t=" + Date.now());
     if (!coreSrc) {
       banner("Could not load agent-core.js from " + BASE, "#b06000");
-      sendLog({ level: "error", src: "loader", url: location.href, msg: "could not fetch agent-core.js" });
       return;
     }
-    // The core needs the DOM, so run it once the page has parsed.
-    whenDomReady(() => {
-      try {
-        runViaPage(coreSrc);
-        sendLog({ level: "info", src: "loader", url: location.href, msg: "core injected via page script" });
-        return;
-      } catch (e) {
-        const msg = e && e.message ? e.message : String(e);
-        sendLog({ level: "warn", src: "loader", url: location.href, msg: "page-script injection failed, trying direct: " + msg });
-      }
-      try {
-        runDirect(coreSrc);
-        sendLog({ level: "info", src: "loader", url: location.href, msg: "core executed directly" });
-      } catch (e) {
-        const msg = e && e.message ? e.message : String(e);
+    try {
+      runDirect(coreSrc);
+      return;
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      if (!/CSP|Function|eval/i.test(msg)) {
         banner("agent-core error: " + msg, "#b3261e");
         sendLog({ level: "error", src: "loader", url: location.href, msg: "agent-core eval failed: " + msg, stack: e && e.stack });
+        return;
       }
-    });
+      sendLog({ level: "warn", src: "loader", url: location.href, msg: "new Function blocked, trying page-script injection: " + msg });
+    }
+    try {
+      runViaPage(coreSrc);
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      banner("agent-core inject error: " + msg, "#b3261e");
+      sendLog({ level: "error", src: "loader", url: location.href, msg: "page-script injection failed: " + msg, stack: e && e.stack });
+    }
   }
 
   let lastToken = null;
@@ -158,19 +139,10 @@
       return;
     }
     if (v.reloadToken !== lastToken || v.coreHash !== lastCoreHash) {
-      lastToken = v.reloadToken;
-      lastCoreHash = v.coreHash;
       location.reload();
     }
   }
 
   boot();
   setInterval(checkReload, 3000);
-  // Firefox Android can suspend timers while a tab is backgrounded; also check
-  // whenever the tab is shown again so edits take effect without waiting.
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) checkReload();
-  });
-  window.addEventListener("focus", checkReload);
-  window.addEventListener("pageshow", checkReload);
 })();

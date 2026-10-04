@@ -303,23 +303,16 @@
               it.extractedSalary?.text ||
               it.salaryText ||
               "";
-            const snippet =
-              it.jobSnippet ||
-              it.snippet ||
-              it.jobDescription ||
-              (it.jobCardSnippet && it.jobCardSnippet.snippet) ||
-              "";
             return {
               jk: String(jk),
               title: it.title || it.displayTitle || it.jobTitle || "",
               company: it.company || it.companyName || it.employerName || "",
               location: it.formattedLocation || it.location || it.jobLocation || "",
               salary_raw: typeof sal === "string" ? sal : "",
-              description_snippet: typeof snippet === "string" ? snippet : "",
               remote: /remote/i.test(
                 String(it.formattedLocation || it.location || it.remoteLocation || ""),
               ),
-              url: "https://www.indeed.com/m/viewjob?jk=" + jk,
+              url: "https://www.indeed.com/viewjob?jk=" + jk,
             };
           });
         }
@@ -369,7 +362,7 @@
         location: location_,
         salary_raw: salary,
         remote: /remote/i.test(location_),
-        url: "https://www.indeed.com/m/viewjob?jk=" + jk,
+        url: "https://www.indeed.com/viewjob?jk=" + jk,
       });
     }
     return out;
@@ -420,35 +413,15 @@
     return `${range} ${unit ? "a " + unit.toLowerCase() : ""} ${cur === "USD" ? "" : cur}`.trim();
   }
 
-  function jobDescriptionHtml() {
-    const ld = getJsonLd();
-    if (ld && ld.description) return ld.description;
-    const el = firstSel([
-      "#jobDescriptionText",
-      ".jobsearch-JobComponent-description",
-      "[data-testid='jobDescriptionText']",
-      "[id*='jobDescription' i]",
-      "[class*='jobDescription' i]",
-      ".jobsearch-DesktopStickyContainer .jobsearch-JobComponent-description",
-      "article",
-      "main",
-    ]);
-    if (el && el.innerHTML && el.innerHTML.length > 40) return el.innerHTML;
-    // last resort: the whole body text of the job view
-    const body = document.body ? document.body.innerText : "";
-    const m = body.match(/(Job description|Description|About the job)[\s\S]{80,}/i);
-    return m ? m[0] : "";
-  }
-
   function scrapeJob() {
     const ld = getJsonLd() || {};
     const params = new URLSearchParams(location.search);
     const jk = params.get("jk") || params.get("vjk") || document.querySelector("[data-jk]")?.getAttribute("data-jk") || "";
     const org = ld.hiringOrganization || {};
-    const domCompany = text(firstSel(["[data-testid='inlineHeader-companyName']", ".jobsearch-CompanyInfoContainer a", "div[data-company-name='true']", "[data-testid='companyName']", "[class*='companyName' i]"]));
+    const domCompany = text(firstSel(["[data-testid='inlineHeader-companyName']", ".jobsearch-CompanyInfoContainer a", "div[data-company-name='true']", "[data-testid='companyName']"]));
     const company = org.name || domCompany || "";
     const companyAnchor = firstSel(["a[href*='/cmp/']", "[data-testid='inlineHeader-companyName'] a"]);
-    const descriptionHtml = jobDescriptionHtml();
+    const descriptionHtml = ld.description || text(firstSel(["#jobDescriptionText", ".jobsearch-JobComponent-description"]));
     const loc =
       formatAddress(ld.jobLocation && ld.jobLocation.address) ||
       (ld.jobLocation && ld.jobLocation.name) ||
@@ -468,7 +441,7 @@
       date_posted: ld.datePosted || "",
       description_html: String(descriptionHtml || "").slice(0, MAX_DESC),
       apply_url: applyUrl,
-      url: "https://www.indeed.com/m/viewjob?jk=" + (jk || ""),
+      url: location.origin + "/viewjob?jk=" + (jk || ""),
     };
   }
 
@@ -519,7 +492,7 @@
     return {
       kind: "company",
       name,
-      url: "https://www.indeed.com/m" + location.pathname,
+      url: location.origin + location.pathname,
       size_raw: parsed.raw || sizeRaw,
       size_min: parsed.min,
       size_max: parsed.max,
