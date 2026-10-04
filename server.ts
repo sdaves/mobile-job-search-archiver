@@ -891,7 +891,9 @@ const server = Bun.serve({
 
     if (p === "/listings") {
       const jobs = readJsonl(LISTINGS_FILE);
-      return json(jobs);
+      return new Response(JSON.stringify(jobs), {
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...CORS },
+      });
     }
     if (p === "/export" || p === "/export.json") {
       const rows = buildExport();

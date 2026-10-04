@@ -65,7 +65,7 @@ $("save").onclick = () => {
 
 async function loadListings() {
   try {
-    const r = await fetch("/listings");
+    const r = await fetch("/listings", { cache: "no-store" });
     const rows = await r.json();
     const byJk = new Map();
     for (const j of rows) {
@@ -74,11 +74,14 @@ async function loadListings() {
       byJk.set(j.jk, {
         ...prev,
         ...j,
+        scraped_at: [prev.scraped_at, j.scraped_at].filter(Boolean).sort().pop() || "",
         description_html: j.description_html || prev.description_html,
         description_snippet: j.description_snippet || prev.description_snippet,
       });
     }
-    const list = [...byJk.values()].reverse().slice(0, 50);
+    const list = [...byJk.values()]
+      .sort((a, b) => (b.scraped_at || "").localeCompare(a.scraped_at || ""))
+      .slice(0, 50);
     const tb = $("listings").querySelector("tbody");
     tb.innerHTML = "";
     for (const j of list) {
@@ -90,10 +93,42 @@ async function loadListings() {
         : j.description_snippet
           ? '<span class="muted">snippet</span>'
           : '<span class="muted">—</span>';
-      tr.innerHTML = `<td>${escapeHtml(j.title || "")}</td><td>${escapeHtml(j.company || "")}</td><td>${size}</td><td>${escapeHtml(j.salary_raw || "")}</td><td>${escapeHtml(j.location || "")}</td><td>${desc}</td>`;
+      const title = j.url
+        ? `<a href="${escapeHtml(j.url)}" target="_blank" rel="noopener">${escapeHtml(j.title || "")}</a>`
+        : escapeHtml(j.title || "");
+      const hasDesc = !!(j.description_html || j.description_snippet);
+      tr.className = "job-row" + (hasDesc ? " expandable" : "");
+      tr.innerHTML = `<td>${title}</td><td>${escapeHtml(j.company || "")}</td><td>${size}</td><td>${escapeHtml(j.salary_raw || "")}</td><td>${escapeHtml(j.location || "")}</td><td class="muted">${escapeHtml(fmtScraped(j.scraped_at))}</td><td>${desc}</td>`;
       tb.appendChild(tr);
+
+      if (hasDesc) {
+        const exp = document.createElement("tr");
+        exp.className = "desc-row";
+        exp.hidden = true;
+        const cell = document.createElement("td");
+        cell.colSpan = 7;
+        cell.className = "desc-cell";
+        cell.innerHTML = j.description_html
+          ? `<div class="desc-body">${j.description_html}</div>`
+          : `<div class="desc-body">${escapeHtml(j.description_snippet)}</div>`;
+        exp.appendChild(cell);
+        tb.appendChild(exp);
+        tr.addEventListener("click", (e) => {
+          if (e.target.closest("a")) return;
+          exp.hidden = !exp.hidden;
+          tr.classList.toggle("open", !exp.hidden);
+        });
+      }
     }
   } catch {}
+}
+
+function fmtScraped(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 function escapeHtml(s) {

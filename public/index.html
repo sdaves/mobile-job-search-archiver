@@ -8,7 +8,7 @@
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
   body { margin: 0; font: 15px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #0f1115; color: #e6e8eb; }
-  header { padding: 14px 16px; background: #161a22; border-bottom: 1px solid #232936; position: sticky; top: 0; }
+  header { padding: 14px 16px; background: #161a22; border-bottom: 1px solid #232936; }
   h1 { font-size: 17px; margin: 0 0 8px; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .grow { flex: 1 1 220px; }
@@ -38,6 +38,14 @@
   .muted { color: #9aa4b2; font-size: 12px; }
   #log, #weblog { font-family: ui-monospace, monospace; font-size: 12px; max-height: 220px; overflow: auto; white-space: pre-wrap; color: #b9c2cf; }
   .small-badge { background: #123d1f; color: #6ee7a0; border-radius: 6px; padding: 1px 6px; font-size: 11px; }
+  #listings tbody tr.job-row.expandable { cursor: pointer; }
+  #listings tbody tr.job-row.expandable:hover { background: #1a1f29; }
+  #listings tbody tr.job-row.open { background: #1a1f29; }
+  .desc-cell { background: #0f131a; color: #c8d0db; }
+  .desc-body { max-height: 320px; overflow: auto; white-space: normal; overflow-wrap: anywhere; font-size: 13px; padding: 2px 4px; }
+  .desc-body p { margin: .5em 0; }
+  .desc-body ul, .desc-body ol { margin: .5em 0; padding-left: 1.4em; }
+  .desc-body a { color: #7db0ff; }
   .md { font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
   .md h1, .md h2, .md h3, .md h4 { line-height: 1.25; margin: 1.1em 0 .5em; }
   .md h1 { font-size: 1.5em; border-bottom: 1px solid #232936; padding-bottom: .3em; }
@@ -123,7 +131,7 @@
 
   <div class="card">
     <h2>Recent listings</h2>
-    <div style="overflow:auto"><table id="listings"><thead><tr><th>Title</th><th>Company</th><th>Size</th><th>Salary</th><th>Location</th><th>Desc</th></tr></thead><tbody></tbody></table></div>
+    <div style="overflow:auto"><table id="listings"><thead><tr><th>Title</th><th>Company</th><th>Size</th><th>Salary</th><th>Location</th><th>Scraped</th><th>Desc</th></tr></thead><tbody></tbody></table></div>
   </div>
 
   <div class="card">

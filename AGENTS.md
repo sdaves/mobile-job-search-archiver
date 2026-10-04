@@ -8,7 +8,9 @@ Agent/internals doc. Read this before changing anything.
 ## Environment (verified)
 
 - Device: Android, Termux (`u0_a200`), aarch64.
-- Runtimes: `python3 3.13.12`, `bun 1.4.2`, `node` present, `curl`.
+- Runtimes: `python3 3.13.12`, `bun 1.4.2`, `curl`. **`node` is NOT installed**
+  (`node: command not found`); use `bun run` / `bun build --outfile /dev/null`
+  for JS syntax checking.
 - Outside browsers: `org.mozilla.fennec_fdroid` (Firefox) and
   `app.vanadium.browser` (Chromium-based). Chrome/Kiwi NOT installed.
 - No extension support in Vanadium. Firefox is the automation target.
@@ -58,6 +60,20 @@ Agent/internals doc. Read this before changing anything.
   max-pages cap. State persists; next day resumes.
 - Scope: **remote** software roles (`l=Remote`), any software role.
 - Small company = **1–50 employees**.
+- Dashboard was built in-session with these UX decisions:
+  - Header is **not sticky** — it scrolls with the page.
+  - Recent-listings columns: Title, Company, Size, Salary, Location,
+    **Scraped**, Desc. Title is a link to the saved listing `url`
+    (`target=_blank`).
+  - Rows with a description/snippet are **expandable on tap**: a full-width
+    detail row reveals the description (rendered HTML when available, escaped
+    snippet otherwise).
+  - Listings are **sorted newest-first by `scraped_at`**, deduped by `jk`,
+    capped at 50. Per-`jk` merge keeps the **max `scraped_at`**, not the
+    first-seen position — fixes a bug where a job's early search-stub position
+    buried its later full scrape outside the top 50.
+  - `GET /listings` is served with `Cache-Control: no-store` so the dashboard
+    never shows stale data.
 
 ## Files
 
@@ -67,6 +83,10 @@ Agent/internals doc. Read this before changing anything.
   server.ts            <- Bun HTTP server + dashboard + queue/state
   public/index.html    <- control panel (start/stop, terms, budget, stats)
   public/app.js
+  public/ping.html     <- standalone websocket/SSE ping test page
+  public/ping.js
+  public/mermaid.min.js<- vendored Mermaid for the docs viewer
+  *.md (root)          <- served in the dashboard Documentation panel
   agent.user.js        <- Tampermonkey loader (installed once; rarely changes)
   agent-core.js        <- live scraping/logging logic (edited often)
   data/state.json      <- queue cursor, daily seconds used, terms, paused, stats
@@ -77,6 +97,8 @@ Agent/internals doc. Read this before changing anything.
   data/export.csv
   data/web.log         <- browser console + scrape diagnostics (JSONL)
   data/web.log.1       <- rotated web log
+  data/req.log         <- every HTTP request {ts,method,path,ua} (JSONL)
+  data/server.log      <- bun server stdout when started detached
 ```
 
 ## Server endpoints
@@ -91,12 +113,22 @@ Agent/internals doc. Read this before changing anything.
 - `POST /log`             -> body `{entries:[...]}` or one entry; append to
                              `data/web.log`
 - `GET /web.log?tail=N`   -> recent browser log JSONL (default 200)
-- `POST /control`         -> `{cmd: "start"|"stop"|"terms"|"budget"|"reload",
-                             ...}`
+- `POST /control`         -> `{cmd: "start"|"stop"|"terms"|"budget"|"reload"|
+                             "reset", ...}`
 - `GET /livereload`       -> `{reloadToken, coreHash, loaderHash}`
 - `GET /events`           -> SSE live dashboard feed
-- `GET /listings`         -> JSON of collected jobs
+- `GET /state`            -> current state payload (one-shot)
+- `GET /agent-status`     -> liveness/staleness of browser/loader/ingest,
+                             derived from `web.log` + `req.log`
+- `GET /listings`         -> raw `listings.jsonl` lines (dupes included),
+                             `Cache-Control: no-store`; the dashboard dedupes
+                             by `jk` and sorts by `scraped_at`
 - `GET /export.md|csv|json`
+- `GET /ping`, `/ping.html`, `/ping.js` -> standalone SSE/websocket ping test
+- `GET /mermaid.min.js`   -> vendored Mermaid (long cache)
+- `GET /docs`             -> list of root `*.md` files
+- `GET /docs/content?name=<file>.md` -> rendered markdown HTML for the
+                             Documentation panel (name must be a bare filename)
 
 Queue build order per run:
 1. one search URL per term -> `https://www.indeed.com/jobs?q=<term>&l=Remote`
@@ -156,11 +188,14 @@ the core polls `/livereload` and reloads, re-fetching the edited core.
 {"kind":"job","jk":"...","title":"...","company":"...","company_url":"...",
  "salary_raw":"...","salary_min":null,"salary_max":null,"currency":null,
  "location":"...","remote":true,"employment_type":"...","date_posted":"...",
- "description_html":"...","apply_url":"...","url":"...","scraped_at":"ISO"}
+ "description_html":"...","description_snippet":"...","apply_url":"...",
+ "url":"...","source":"search|jobpage","scraped_at":"ISO"}
 ```
 
 `companies.jsonl`: `{"name","url","size_raw","size_min","size_max","revenue",
 "founded","scraped_at"}`.
+
+`req.log`: one line per HTTP request, `{"ts","method","path","ua"}`.
 
 ### Ingest dedupe (`seenJobs`)
 
@@ -183,9 +218,10 @@ salary desc, and adds parsed `seniority` + `tech_tags` + a `notes` field.
 
 ## Export fields for resume building
 
-title, company, company_size, salary_raw/min/max, location, remote,
-employment_type, date_posted, url, apply_url, description (text), seniority,
-tech_tags, notes.
+title, company, company_size, small_company, salary_raw/min/max,
+salary_currency, salary_period, salary_annual_max, location, remote,
+employment_type, date_posted, url, apply_url, description, description_full,
+seniority, tech_tags, notes, scraped_at.
 
 ## Run / verification
 
@@ -211,9 +247,10 @@ tech_tags, notes.
 
 ## Open items (defaults applied unless user says otherwise)
 
-- Terms (default 10): software engineer, senior software engineer, backend,
-  full stack, frontend, devops, data engineer, machine learning, mobile,
-  site reliability.
+- Terms (default 10): software engineer, senior software engineer, backend
+  engineer, full stack engineer, frontend engineer, devops engineer, data
+  engineer, machine learning engineer, mobile engineer, site reliability
+  engineer.
 - Budget 5 min/day, delay 4–12s.
 - Include seniority/tech_tags/notes in export (default yes).
 - Confirm Tampermonkey installs in Firefox; else target Violentmonkey.
