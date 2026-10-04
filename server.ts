@@ -545,6 +545,52 @@ function broadcast() {
   }
 }
 
+function agentStatus() {
+  const REQ_LOG = join(DATA, "req.log");
+  let lastBrowser: any = null;
+  let lastLoader: any = null;
+  let lastIngest: any = null;
+  try {
+    if (existsSync(WEB_LOG)) {
+      for (const line of readFileSync(WEB_LOG, "utf8").split("\n").filter(Boolean).slice(-400)) {
+        try {
+          const e = JSON.parse(line);
+          if (e.src === "loader") lastLoader = e;
+        } catch {}
+      }
+    }
+  } catch {}
+  try {
+    if (existsSync(REQ_LOG)) {
+      const lines = readFileSync(REQ_LOG, "utf8").split("\n").filter(Boolean).slice(-800);
+      for (const line of lines) {
+        let e: any;
+        try {
+          e = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        const ua = e.ua || "";
+        const isBrowser = /firefox|gecko|chrome|safari/i.test(ua);
+        if (isBrowser && e.path && !e.path.startsWith("/events") && !e.path.startsWith("/state")) {
+          lastBrowser = e;
+        }
+        if (e.path === "/ingest" || e.path === "/next") lastIngest = e;
+      }
+    }
+  } catch {}
+  const ageSec = (iso: string) => (iso ? Math.round((Date.now() - Date.parse(iso)) / 1000) : null);
+  return {
+    now: nowIso(),
+    lastBrowserRequest: lastBrowser,
+    lastBrowserAgeSec: lastBrowser ? ageSec(lastBrowser.ts) : null,
+    lastLoaderLog: lastLoader,
+    lastLoaderAgeSec: lastLoader ? ageSec(lastLoader.ts) : null,
+    lastIngestOrNext: lastIngest,
+    lastIngestAgeSec: lastIngest ? ageSec(lastIngest.ts) : null,
+  };
+}
+
 // ---------- HTTP ----------
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -790,6 +836,9 @@ const server = Bun.serve({
       return new Response(out ? out + "\n" : "", {
         headers: { "Content-Type": "application/x-ndjson; charset=utf-8", ...CORS },
       });
+    }
+    if (p === "/agent-status") {
+      return json(agentStatus());
     }
     if (p === "/next") return handleNext();
     if (p === "/state") return json(statePayload());

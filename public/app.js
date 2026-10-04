@@ -124,6 +124,21 @@ async function loadWebLog() {
   } catch {}
 }
 
+async function loadAgentStatus() {
+  const el = $("agentStatus");
+  if (!el) return;
+  try {
+    const r = await fetch("/agent-status");
+    const s = await r.json();
+    const fmt = (sec) => (sec == null ? "never" : sec < 90 ? sec + "s ago" : Math.round(sec / 60) + "m ago");
+    const browser = s.lastBrowserAgeSec != null ? fmt(s.lastBrowserAgeSec) : "never";
+    const loader = s.lastLoaderAgeSec != null ? fmt(s.lastLoaderAgeSec) : "never";
+    const ing = s.lastIngestAgeSec != null ? fmt(s.lastIngestAgeSec) : "never";
+    const msg = s.lastLoaderLog ? (s.lastLoaderLog.msg || "").slice(0, 40) : "";
+    el.textContent = `browser ${browser} · loader ${loader} · next/ingest ${ing}${msg ? " · " + msg : ""}`;
+  } catch {}
+}
+
 let mermaidLoading = null;
 function loadMermaid() {
   if (window.mermaid) return Promise.resolve(window.mermaid);
@@ -252,5 +267,7 @@ connect();
 loadListings();
 loadWebLog();
 loadDocs();
+loadAgentStatus();
 setInterval(loadListings, 15000);
 setInterval(loadWebLog, 4000);
+setInterval(loadAgentStatus, 5000);
