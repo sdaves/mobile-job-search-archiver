@@ -152,6 +152,12 @@ function finalizeRun(reason: string) {
 
 const INDEED_BASE = "https://www.indeed.com/m";
 
+const SKIP_URL_PATTERNS = [/\/cmp\//i];
+
+function isSkippableUrl(url: string) {
+  return !!url && SKIP_URL_PATTERNS.some((re) => re.test(url));
+}
+
 function toMobileUrl(url: string) {
   if (!url) return url;
   return url
@@ -622,6 +628,9 @@ async function handleNext() {
     return stopResponse("maxpages");
   }
   if (_state.queue.length === 0) buildQueue();
+  while (_state.queue.length && isSkippableUrl(_state.queue[0].url)) {
+    _state.queue.shift();
+  }
   if (_state.queue.length === 0) {
     finalizeRun("done");
     return stopResponse("done");
@@ -681,8 +690,10 @@ async function handleIngest(req: Request) {
         appendJsonl(LISTINGS_FILE, { kind: "job", ...j, source: "search", scraped_at });
         _state.seenJobs[key] = mergedSeen(_state.seenJobs[key], f);
       }
-      if (j.url) {
+      if (j.url && !isSkippableUrl(j.url)) {
         fresh.push({ type: "job", url: toMobileUrl(j.url), jk: key, company: j.company });
+      } else if (j.url) {
+        addLog(`skipped job url (pattern): ${String(j.url).slice(0, 120)}`);
       }
       added++;
     }
@@ -703,9 +714,11 @@ async function handleIngest(req: Request) {
     }
     _state.stats.jobs++;
     const cname = norm(body.company);
-    if (body.company_url && cname && !_state.queued.companies.includes(cname)) {
+    if (body.company_url && cname && !_state.queued.companies.includes(cname) && !isSkippableUrl(body.company_url)) {
       _state.queued.companies.push(cname);
       _state.queue.push({ type: "company", url: toMobileUrl(body.company_url), company: body.company });
+    } else if (body.company_url && isSkippableUrl(body.company_url)) {
+      addLog(`skipped company url (pattern): ${String(body.company_url).slice(0, 120)}`);
     }
     addLog(`job "${body.title || ""}" @ ${body.company || ""}`);
   } else if (kind === "company") {

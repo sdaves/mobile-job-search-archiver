@@ -63,6 +63,8 @@ $("save").onclick = () => {
   });
 };
 
+let listingRows = [];
+
 async function loadListings() {
   try {
     const r = await fetch("/listings", { cache: "no-store" });
@@ -79,48 +81,83 @@ async function loadListings() {
         description_snippet: j.description_snippet || prev.description_snippet,
       });
     }
-    const list = [...byJk.values()]
-      .sort((a, b) => (b.scraped_at || "").localeCompare(a.scraped_at || ""))
-      .slice(0, 50);
-    const tb = $("listings").querySelector("tbody");
-    tb.innerHTML = "";
-    for (const j of list) {
-      const tr = document.createElement("tr");
-      const size = j.size_raw ? `<span class="small-badge">${escapeHtml(j.size_raw)}</span>` : "";
-      const hasFull = j.description_html && j.description_html.length > 0;
-      const desc = hasFull
-        ? '<span class="small-badge">desc</span>'
-        : j.description_snippet
-          ? '<span class="muted">snippet</span>'
-          : '<span class="muted">—</span>';
-      const title = j.url
-        ? `<a href="${escapeHtml(j.url)}" target="_blank" rel="noopener">${escapeHtml(j.title || "")}</a>`
-        : escapeHtml(j.title || "");
-      const hasDesc = !!(j.description_html || j.description_snippet);
-      tr.className = "job-row" + (hasDesc ? " expandable" : "");
-      tr.innerHTML = `<td>${title}</td><td>${escapeHtml(j.company || "")}</td><td>${size}</td><td>${escapeHtml(j.salary_raw || "")}</td><td>${escapeHtml(j.location || "")}</td><td class="muted">${escapeHtml(fmtScraped(j.scraped_at))}</td><td>${desc}</td>`;
-      tb.appendChild(tr);
-
-      if (hasDesc) {
-        const exp = document.createElement("tr");
-        exp.className = "desc-row";
-        exp.hidden = true;
-        const cell = document.createElement("td");
-        cell.colSpan = 7;
-        cell.className = "desc-cell";
-        cell.innerHTML = j.description_html
-          ? `<div class="desc-body">${j.description_html}</div>`
-          : `<div class="desc-body">${escapeHtml(j.description_snippet)}</div>`;
-        exp.appendChild(cell);
-        tb.appendChild(exp);
-        tr.addEventListener("click", (e) => {
-          if (e.target.closest("a")) return;
-          exp.hidden = !exp.hidden;
-          tr.classList.toggle("open", !exp.hidden);
-        });
-      }
-    }
+    listingRows = [...byJk.values()].sort((a, b) =>
+      (b.scraped_at || "").localeCompare(a.scraped_at || ""),
+    );
+    renderListings();
   } catch {}
+}
+
+function renderListings() {
+  const filter = ($("listingFilter")?.value || "").trim().toLowerCase();
+  const list = (filter
+    ? listingRows.filter((j) => listingHaystack(j).includes(filter))
+    : listingRows
+  ).slice(0, 50);
+
+  const tb = $("listings").querySelector("tbody");
+  tb.innerHTML = "";
+  for (const j of list) {
+    const tr = document.createElement("tr");
+    const size = j.size_raw ? `<span class="small-badge">${escapeHtml(j.size_raw)}</span>` : "";
+    const hasFull = j.description_html && j.description_html.length > 0;
+    const desc = hasFull
+      ? '<span class="small-badge">desc</span>'
+      : j.description_snippet
+        ? '<span class="muted">snippet</span>'
+        : '<span class="muted">—</span>';
+    const title = j.url
+      ? `<a href="${escapeHtml(j.url)}" target="_blank" rel="noopener">${escapeHtml(j.title || "")}</a>`
+      : escapeHtml(j.title || "");
+    const hasDesc = !!(j.description_html || j.description_snippet);
+    tr.className = "job-row" + (hasDesc ? " expandable" : "");
+    tr.innerHTML = `<td>${title}</td><td>${escapeHtml(j.company || "")}</td><td>${size}</td><td>${escapeHtml(j.salary_raw || "")}</td><td>${escapeHtml(j.location || "")}</td><td class="muted">${escapeHtml(fmtScraped(j.scraped_at))}</td><td>${desc}</td>`;
+    tb.appendChild(tr);
+
+    if (hasDesc) {
+      const exp = document.createElement("tr");
+      exp.className = "desc-row";
+      exp.hidden = true;
+      const cell = document.createElement("td");
+      cell.colSpan = 7;
+      cell.className = "desc-cell";
+      cell.innerHTML = j.description_html
+        ? `<div class="desc-body">${j.description_html}</div>`
+        : `<div class="desc-body">${escapeHtml(j.description_snippet)}</div>`;
+      exp.appendChild(cell);
+      tb.appendChild(exp);
+      tr.addEventListener("click", (e) => {
+        if (e.target.closest("a")) return;
+        exp.hidden = !exp.hidden;
+        tr.classList.toggle("open", !exp.hidden);
+      });
+    }
+  }
+}
+
+function listingHaystack(j) {
+  return [
+    j.title,
+    j.company,
+    j.size_raw,
+    j.salary_raw,
+    j.location,
+    j.employment_type,
+    j.date_posted,
+    j.scraped_at,
+    j.description_snippet,
+    stripTags(j.description_html),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function stripTags(html) {
+  if (!html) return "";
+  const d = document.createElement("div");
+  d.innerHTML = html;
+  return d.textContent || "";
 }
 
 function fmtScraped(iso) {
@@ -137,6 +174,7 @@ function escapeHtml(s) {
 
 $("reload").onclick = loadListings;
 $("reloadBrowser").onclick = () => control({ cmd: "reload" });
+$("listingFilter").oninput = renderListings;
 
 async function loadWebLog() {
   const el = $("weblog");
