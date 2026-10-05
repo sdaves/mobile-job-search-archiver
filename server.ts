@@ -171,7 +171,7 @@ function buildQueue() {
     const q = encodeURIComponent(term);
     _state.queue.push({
       type: "search",
-      url: `${INDEED_BASE}/jobs?q=${q}&l=Remote`,
+      url: `${INDEED_BASE}/jobs?q=${q}&l=Remote&sort=date`,
       term,
     });
   }

@@ -131,7 +131,7 @@ Agent/internals doc. Read this before changing anything.
                              Documentation panel (name must be a bare filename)
 
 Queue build order per run:
-1. one search URL per term -> `https://www.indeed.com/jobs?q=<term>&l=Remote`
+1. one search URL per term -> `https://www.indeed.com/jobs?q=<term>&l=Remote&sort=date`
 2. every discovered job URL (`/viewjob?jk=...`)
 3. unique company pages (`/cmp/<slug>`)
 
