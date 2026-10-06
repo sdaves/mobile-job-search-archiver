@@ -69,11 +69,10 @@ Agent/internals doc. Read this before changing anything.
     detail row reveals the description (rendered HTML when available, escaped
     snippet otherwise).
   - Listings are **sorted newest-first by `scraped_at`**, deduped by `jk`,
-    capped at 50. Per-`jk` merge keeps the **max `scraped_at`**, not the
-    first-seen position — fixes a bug where a job's early search-stub position
-    buried its later full scrape outside the top 50. Merge also **prefers
-    non-empty field values** so a later, poorer re-scrape cannot blank a field
-    (salary/location/company) that an earlier scrape already filled.
+    capped at 50. Per-`jk` merge keeps the **earliest (first-seen)
+    `scraped_at`**: a later re-scrape never moves a listing's date. Merge also
+    **prefers non-empty field values** so a later, poorer re-scrape cannot blank
+    a field (salary/location/company) that an earlier scrape already filled.
   - `GET /listings` is served with `Cache-Control: no-store` so the dashboard
     never shows stale data.
 
@@ -165,7 +164,13 @@ with scrape diagnostics (page type, challenge result, embedded-JSON/JSON-LD
 presence, selector counts, jobs found, DOM snapshot when 0).
 
 After ingest, `GET /next`; if `stop` show "done for today" banner and idle;
-otherwise `location.assign(url)` after `delayMs`.
+otherwise `location.assign(url)` after `delayMs`. The core shows an immediate
+"Checking page…" / "Scraping <type> page…" banner as soon as it runs, before the
+content wait, so a slow SPA render never leaves the page blank. Job-page
+readiness keys off the `JobPosting` JSON-LD (the stable/earliest signal on the
+`/m/` mobile page); the desktop-only description selectors never match there and
+previously forced the poll to its full 12s timeout. The diagnostic `report()`
+status POSTs are fire-and-forget so they cannot delay the next-page banner.
 
 Challenge/CAPTCHA detection: text "Just a moment", "Additional Verification",
 or Cloudflare interstitials -> POST status, show banner, halt. User completes
@@ -214,6 +219,12 @@ not written), so resuming a run cannot bloat `listings.jsonl`. Search stubs
 (no `description_html`) still append once per new `jk`; the later job-page
 record appends again because it adds the description. Export merges by `jk`
 anyway, so this only reduces redundant lines.
+
+State also keeps `firstScraped: { [jk]: ISO }`, the earliest `scraped_at` seen
+for a `jk`, rebuilt from `listings.jsonl` on load and on `reset`. Every appended
+job record is stamped with that first-seen time (`firstScrapedAt`), so a later
+re-scrape that adds a description/salary keeps the original date; export and the
+dashboard's `jk` merge likewise keep the earliest `scraped_at`.
 
 `norm` (`queued.jobs`/`queued.companies`) still gates search-task, job-task,
 and company-page queueing. On `start`, the search queue is rebuilt from terms

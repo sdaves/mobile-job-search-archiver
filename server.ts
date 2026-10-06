@@ -65,6 +65,9 @@ type State = {
   queue?: Task[]; // legacy flat queue, migrated on load
   queued: { jobs: string[]; companies: string[] };
   seenJobs: Record<string, { full: boolean; salary: boolean; company: boolean }>;
+  // First time each jk was recorded; scraped_at is pinned to this so a later
+  // re-scrape cannot move a listing's date.
+  firstScraped: Record<string, string>;
   pagesThisRun: number;
   stats: { searches: number; jobs: number; companies: number };
   reloadToken: number;
@@ -99,6 +102,7 @@ function defaultState(): State {
     companyQueue: [],
     queued: { jobs: [], companies: [] },
     seenJobs: {},
+    firstScraped: {},
     pagesThisRun: 0,
     stats: { searches: 0, jobs: 0, companies: 0 },
     reloadToken: 0,
@@ -120,12 +124,15 @@ function loadState() {
       _state.companyQueue = Array.isArray(raw.companyQueue) ? raw.companyQueue : [];
       migrateLegacyQueue(raw.queue);
       delete _state.queue;
-      _state.seenJobs = buildSeenIndex();
       _state.stats = { searches: 0, jobs: 0, companies: 0, ...(raw.stats || {}) };
     }
   } catch {
     _state = defaultState();
   }
+  // Disk is the source of truth: always rebuild the job indexes from
+  // listings.jsonl so first-seen dates survive even without a state file.
+  _state.seenJobs = buildSeenIndex();
+  _state.firstScraped = buildFirstScraped();
 }
 
 // State written before the round-robin scheduler kept a single flat `queue`.
@@ -275,6 +282,29 @@ function buildSeenIndex(): Record<string, SeenJob> {
     }
   }
   return idx;
+}
+
+// Earliest scraped_at ever recorded per jk (ISO strings sort chronologically).
+// Rebuilt from disk so the first-seen date survives restarts and resets.
+function buildFirstScraped(): Record<string, string> {
+  const idx: Record<string, string> = {};
+  for (const rec of readJsonl(LISTINGS_FILE)) {
+    if (rec && rec.kind === "job" && rec.jk && rec.scraped_at) {
+      const k = String(rec.jk);
+      const at = String(rec.scraped_at);
+      if (!idx[k] || at < idx[k]) idx[k] = at;
+    }
+  }
+  return idx;
+}
+
+// Pin a listing's scraped_at to the first time its jk was seen, so a later
+// re-scrape (e.g. the search stub -> full job page) never moves the date.
+function firstScrapedAt(key: string, fallback: string) {
+  if (!key) return fallback;
+  const at = _state.firstScraped[key] || fallback;
+  if (!_state.firstScraped[key]) _state.firstScraped[key] = at;
+  return at;
 }
 
 function hasNewInfo(prev: SeenJob | undefined, f: SeenJob) {
@@ -491,6 +521,8 @@ function buildExport() {
       for (const [k, v] of Object.entries(r)) {
         if (v !== null && v !== undefined && v !== "") merged[k] = v;
       }
+      // Keep the first-seen date; a re-scrape must not move it.
+      merged.scraped_at = [prev.scraped_at, r.scraped_at].filter(Boolean).sort()[0] || "";
       byJk.set(r.jk, merged);
     }
   }
@@ -756,7 +788,8 @@ async function handleIngest(req: Request) {
       _state.queued.jobs.push(key);
       const f = seenFlags(j);
       if (hasNewInfo(_state.seenJobs[key], f)) {
-        appendJsonl(LISTINGS_FILE, { kind: "job", ...j, source: "search", scraped_at });
+        const at = firstScrapedAt(key, scraped_at);
+        appendJsonl(LISTINGS_FILE, { kind: "job", ...j, source: "search", scraped_at: at });
         _state.seenJobs[key] = mergedSeen(_state.seenJobs[key], f);
       }
       if (j.url && !isSkippableUrl(j.url)) {
@@ -781,7 +814,8 @@ async function handleIngest(req: Request) {
     const key = body.jk ? String(body.jk) : "";
     const f = seenFlags(body);
     if (!key || hasNewInfo(_state.seenJobs[key], f)) {
-      appendJsonl(LISTINGS_FILE, { kind: "job", ...body, source: body.source || "jobpage", scraped_at });
+      const at = firstScrapedAt(key, scraped_at);
+      appendJsonl(LISTINGS_FILE, { kind: "job", ...body, source: body.source || "jobpage", scraped_at: at });
       if (key) _state.seenJobs[key] = mergedSeen(_state.seenJobs[key], f);
     } else {
       addLog(`job "${body.title || ""}" (dup, skipped)`);
@@ -849,6 +883,7 @@ async function handleControl(req: Request) {
     _state.secondsUsed = 0;
     _state.pagesThisRun = 0;
     _state.seenJobs = buildSeenIndex();
+    _state.firstScraped = buildFirstScraped();
     addLog("reset queue/stats");
   } else {
     return json({ ok: false, error: "unknown cmd" }, 400);

@@ -77,7 +77,7 @@ async function loadListings() {
       for (const [k, v] of Object.entries(j)) {
         if (v !== null && v !== undefined && v !== "") merged[k] = v;
       }
-      merged.scraped_at = [prev.scraped_at, j.scraped_at].filter(Boolean).sort().pop() || "";
+      merged.scraped_at = [prev.scraped_at, j.scraped_at].filter(Boolean).sort()[0] || "";
       byJk.set(j.jk, merged);
     }
     listingRows = [...byJk.values()].sort((a, b) =>

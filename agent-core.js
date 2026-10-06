@@ -552,6 +552,10 @@
       document.querySelector("a[data-jk], a[href*='viewjob?jk='], .job_seen_beacon, [data-testid='slider_item'], li .jobTitle") ||
       (W._initialData && (W._initialData.jobKeys || W._initialData.jobs));
     const hasJobContent = () =>
+      // JSON-LD JobPosting is the stable/earliest signal on the mobile page;
+      // the desktop-only selectors below never match on /m/, which used to
+      // force this poll to run to its full timeout.
+      !!getJsonLd() ||
       document.querySelector("#jobDescriptionText, .jobsearch-JobComponent-description, [data-testid='jobDescriptionText']") ||
       (W._initialData && W._initialData.jobInfo) ||
       document.querySelector("[data-testid='inlineHeader-companyName']");
@@ -576,6 +580,7 @@
   }
 
   async function run() {
+    banner("Checking page…", "#1a73e8");
     if (await detectChallengeStable()) {
       log("warn", "cloudflare challenge detected", diagSearch());
       await post("/ingest", { kind: "status", challenge: true, reason: "cloudflare-challenge" });
@@ -583,10 +588,18 @@
       return;
     }
     const type = pageType();
+    banner(`Scraping ${type} page…`, "#1a73e8");
+    const waitStart = Date.now();
+    let ready = true;
     if (type === "search" || type === "job" || type === "company") {
-      await waitForContent(type);
+      ready = await waitForContent(type);
     }
-    log("info", `page type=${type}`, { url: location.href, title: document.title.slice(0, 120) });
+    log("info", `page type=${type}`, {
+      url: location.href,
+      title: document.title.slice(0, 120),
+      ready,
+      waitedMs: Date.now() - waitStart,
+    });
     try {
       if (type === "job") {
         const rec = scrapeJob();
@@ -598,7 +611,7 @@
           salary: rec.salary_raw,
           location: rec.location,
         });
-        await report(`job ${rec.jk} "${rec.title}" @ ${rec.company} attrs=${rec.description_html ? rec.description_html.length : 0}`);
+        report(`job ${rec.jk} "${rec.title}" @ ${rec.company} attrs=${rec.description_html ? rec.description_html.length : 0}`);
       } else if (type === "search") {
         const term = (new URLSearchParams(location.search).get("q") || "").trim();
         let via = "json";
@@ -609,16 +622,16 @@
         }
         await post("/ingest", { kind: "search", term, jobs });
         log("info", `search scraped "${term}" via=${via} found=${jobs.length}`, diagSearch());
-        await report(`search "${term}" via=${via} found=${jobs.length} title="${document.title.slice(0, 50)}"`);
+        report(`search "${term}" via=${via} found=${jobs.length} title="${document.title.slice(0, 50)}"`);
         if (!jobs.length) log("warn", "search returned 0 jobs", diagSearch());
       } else if (type === "company") {
         const rec = scrapeCompany();
         await post("/ingest", rec);
         log("info", `company scraped "${rec.name}" size=${rec.size_raw}`, { revenue: rec.revenue, founded: rec.founded });
-        await report(`company "${rec.name}" size=${rec.size_raw}`);
+        report(`company "${rec.name}" size=${rec.size_raw}`);
       } else {
         log("warn", `unhandled page type=${type} url=${location.href.slice(0, 120)}`);
-        await report(`unhandled page type=${type} url=${location.href.slice(0, 80)}`);
+        report(`unhandled page type=${type} url=${location.href.slice(0, 80)}`);
       }
     } catch (e) {
       log("error", "scrape-error: " + safeStr(e), { stack: e && e.stack });
