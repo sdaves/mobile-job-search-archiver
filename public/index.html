@@ -116,7 +116,7 @@
       <div style="flex:1 1 100px"><label>Delay max (ms)</label><input id="delayMax" type="number" min="500" step="500" /></div>
       <button id="save">Save settings</button>
     </div>
-    <p class="muted">Queue is built from terms on Start when empty. Each term → one Indeed search, then discovered jobs, then company pages.</p>
+    <p class="muted">Queue is built from terms on Start when empty. All terms are searched first; then discovered jobs are visited round-robin (one per term per round), then company pages. The run stops for the day once everything is exhausted.</p>
   </div>
 
   <div class="card">

@@ -42,6 +42,7 @@ const DEFAULT_TERMS = [
 
 type TaskType = "search" | "job" | "company";
 type Task = { type: TaskType; url: string; term?: string; jk?: string; company?: string };
+type JobBucket = { term: string; jobs: Task[] };
 
 type State = {
   date: string;
@@ -55,7 +56,13 @@ type State = {
   delayMinMs: number;
   delayMaxMs: number;
   maxPages: number;
-  queue: Task[];
+  // Scheduler: searches all run first, then jobs are visited round-robin
+  // (one per search phrase per round), then company pages.
+  searchQueue: Task[];
+  jobBuckets: JobBucket[];
+  bucketCursor: number;
+  companyQueue: Task[];
+  queue?: Task[]; // legacy flat queue, migrated on load
   queued: { jobs: string[]; companies: string[] };
   seenJobs: Record<string, { full: boolean; salary: boolean; company: boolean }>;
   pagesThisRun: number;
@@ -86,7 +93,10 @@ function defaultState(): State {
     delayMinMs: 4000,
     delayMaxMs: 12000,
     maxPages: 40,
-    queue: [],
+    searchQueue: [],
+    jobBuckets: [],
+    bucketCursor: 0,
+    companyQueue: [],
     queued: { jobs: [], companies: [] },
     seenJobs: {},
     pagesThisRun: 0,
@@ -104,12 +114,34 @@ function loadState() {
       const raw = JSON.parse(readFileSync(STATE_FILE, "utf8"));
       _state = { ...defaultState(), ...raw };
       _state.queued = { jobs: [], companies: [], ...(raw.queued || {}) };
+      _state.searchQueue = Array.isArray(raw.searchQueue) ? raw.searchQueue : [];
+      _state.jobBuckets = Array.isArray(raw.jobBuckets) ? raw.jobBuckets : [];
+      _state.bucketCursor = Number(raw.bucketCursor) || 0;
+      _state.companyQueue = Array.isArray(raw.companyQueue) ? raw.companyQueue : [];
+      migrateLegacyQueue(raw.queue);
+      delete _state.queue;
       _state.seenJobs = buildSeenIndex();
       _state.stats = { searches: 0, jobs: 0, companies: 0, ...(raw.stats || {}) };
     }
   } catch {
     _state = defaultState();
   }
+}
+
+// State written before the round-robin scheduler kept a single flat `queue`.
+// Fold any leftover tasks into the new structures so an in-flight run resumes
+// instead of silently dropping its queue.
+function migrateLegacyQueue(legacy: any) {
+  if (!Array.isArray(legacy) || legacy.length === 0) return;
+  const legacyJobs: Task[] = [];
+  for (const task of legacy) {
+    if (!task || !task.url) continue;
+    if (task.type === "search") _state.searchQueue.push(task);
+    else if (task.type === "company") _state.companyQueue.push(task);
+    else if (task.type === "job") legacyJobs.push(task);
+  }
+  if (legacyJobs.length) _state.jobBuckets.push({ term: "legacy", jobs: legacyJobs });
+  addLog(`migrated legacy queue (${legacy.length} tasks)`);
 }
 
 function saveState() {
@@ -166,16 +198,53 @@ function toMobileUrl(url: string) {
     .replace(/^https?:\/\/(?:[a-z0-9-]+\.)*indeed\.com\/cmp\//i, `${INDEED_BASE}/cmp/`);
 }
 
-function buildQueue() {
+function buildSearchQueue() {
+  _state.searchQueue = [];
   for (const term of _state.terms) {
     const q = encodeURIComponent(term);
-    _state.queue.push({
+    _state.searchQueue.push({
       type: "search",
       url: `${INDEED_BASE}/jobs?q=${q}&l=Remote&sort=date`,
       term,
     });
   }
+  _state.jobBuckets = [];
+  _state.bucketCursor = 0;
+  _state.companyQueue = [];
   addLog(`queued ${_state.terms.length} search tasks`);
+}
+
+function schedulerEmpty() {
+  return (
+    _state.searchQueue.length === 0 &&
+    _state.companyQueue.length === 0 &&
+    _state.jobBuckets.every((b) => b.jobs.length === 0)
+  );
+}
+
+// Order: all searches first (each accumulates a job bucket), then one job per
+// bucket per round (round-robin), then company pages.
+function pickNextTask(): Task | null {
+  while (_state.searchQueue.length) {
+    const t = _state.searchQueue.shift()!;
+    if (!isSkippableUrl(t.url)) return t;
+  }
+  const buckets = _state.jobBuckets;
+  for (let tries = 0; tries < buckets.length; tries++) {
+    if (_state.bucketCursor >= buckets.length) _state.bucketCursor = 0;
+    const bucket = buckets[_state.bucketCursor];
+    _state.bucketCursor++;
+    if (bucket.jobs.length) {
+      const t = bucket.jobs.shift()!;
+      if (!isSkippableUrl(t.url)) return t;
+      tries = -1; // skipped task: restart the scan within this same call
+    }
+  }
+  while (_state.companyQueue.length) {
+    const t = _state.companyQueue.shift()!;
+    if (!isSkippableUrl(t.url)) return t;
+  }
+  return null;
 }
 
 function appendJsonl(file: string, obj: any) {
@@ -532,7 +601,10 @@ function statePayload() {
     maxPages: _state.maxPages,
     secondsUsed: Math.round(_state.secondsUsed + elapsedMs() / 1000),
     budgetSeconds: _state.budgetMinutes * 60,
-    queueLength: _state.queue.length,
+    queueLength:
+      _state.searchQueue.length +
+      _state.companyQueue.length +
+      _state.jobBuckets.reduce((n, b) => n + b.jobs.length, 0),
     pagesThisRun: _state.pagesThisRun,
     stats: _state.stats,
     reloadToken: _state.reloadToken || 0,
@@ -628,15 +700,11 @@ async function handleNext() {
     finalizeRun("max pages");
     return stopResponse("maxpages");
   }
-  if (_state.queue.length === 0) buildQueue();
-  while (_state.queue.length && isSkippableUrl(_state.queue[0].url)) {
-    _state.queue.shift();
-  }
-  if (_state.queue.length === 0) {
+  const task = pickNextTask();
+  if (!task) {
     finalizeRun("done");
     return stopResponse("done");
   }
-  const task = _state.queue.shift()!;
   _state.pagesThisRun++;
   const delayMs = rand(_state.delayMinMs, _state.delayMaxMs);
   saveState();
@@ -698,12 +766,17 @@ async function handleIngest(req: Request) {
       }
       added++;
     }
-    // Interleave: visit the freshly discovered job pages next, before more
-    // searches, so the daily budget captures full descriptions rather than
-    // piling up unvisited search stubs. Front of queue, result order preserved.
-    _state.queue.unshift(...fresh);
+    // All searches run first; their discovered jobs are held in per-term
+    // buckets. Once every search is done, jobs are visited round-robin (one
+    // per term per round) so the budget samples every phrase instead of
+    // exhausting one phrase's list first.
+    const term = String(body.term || "");
+    const prior = _state.jobBuckets.find((b) => b.term === term);
+    if (prior) prior.jobs.push(...fresh);
+    else _state.jobBuckets.push({ term, jobs: fresh });
+    const pendingJobs = _state.jobBuckets.reduce((n, b) => n + b.jobs.length, 0);
     _state.stats.searches++;
-    addLog(`search "${body.term || ""}": +${added} jobs, ${fresh.length} queued for detail (queue ${_state.queue.length})`);
+    addLog(`search "${term}": +${added} jobs, ${fresh.length} queued for detail (${_state.jobBuckets.length} terms, ${pendingJobs} jobs pending)`);
   } else if (kind === "job") {
     const key = body.jk ? String(body.jk) : "";
     const f = seenFlags(body);
@@ -717,7 +790,7 @@ async function handleIngest(req: Request) {
     const cname = norm(body.company);
     if (body.company_url && cname && !_state.queued.companies.includes(cname) && !isSkippableUrl(body.company_url)) {
       _state.queued.companies.push(cname);
-      _state.queue.push({ type: "company", url: toMobileUrl(body.company_url), company: body.company });
+      _state.companyQueue.push({ type: "company", url: toMobileUrl(body.company_url), company: body.company });
     } else if (body.company_url && isSkippableUrl(body.company_url)) {
       addLog(`skipped company url (pattern): ${String(body.company_url).slice(0, 120)}`);
     }
@@ -749,7 +822,7 @@ async function handleControl(req: Request) {
     _state.pauseReason = undefined;
     _state.runStart = Date.now();
     _state.pagesThisRun = 0;
-    if (_state.queue.length === 0) buildQueue();
+    if (schedulerEmpty()) buildSearchQueue();
     addLog("started");
   } else if (cmd === "stop") {
     finalizeRun("manual stop");
@@ -767,7 +840,10 @@ async function handleControl(req: Request) {
     _state.reloadToken = (_state.reloadToken || 0) + 1;
     addLog(`browser reload #${_state.reloadToken}`);
   } else if (cmd === "reset") {
-    _state.queue = [];
+    _state.searchQueue = [];
+    _state.jobBuckets = [];
+    _state.bucketCursor = 0;
+    _state.companyQueue = [];
     _state.queued = { jobs: [], companies: [] };
     _state.stats = { searches: 0, jobs: 0, companies: 0 };
     _state.secondsUsed = 0;

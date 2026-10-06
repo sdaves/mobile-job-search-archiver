@@ -294,7 +294,10 @@ classDiagram
         +number delayMinMs
         +number delayMaxMs
         +number maxPages
-        +Task[] queue
+        +Task[] searchQueue
+        +JobBucket[] jobBuckets
+        +number bucketCursor
+        +Task[] companyQueue
         +Queued queued
         +map~string,SeenJob~ seenJobs
         +number pagesThisRun
@@ -308,6 +311,10 @@ classDiagram
         +string term
         +string jk
         +string company
+    }
+    class JobBucket {
+        +string term
+        +Task[] jobs
     }
     class SeenJob {
         +boolean full
@@ -326,7 +333,9 @@ classDiagram
 
     State "1" *-- "1" Queued
     State "1" *-- "1" Stats
-    State "1" o-- "0..*" Task : queue
+    State "1" o-- "0..*" Task : searchQueue
+    State "1" o-- "0..*" JobBucket : jobBuckets
+    State "1" o-- "0..*" Task : companyQueue
     State "1" o-- "0..*" SeenJob : seenJobs
 ```
 
@@ -336,7 +345,9 @@ classDiagram
 classDiagram
     direction LR
     class Orchestrator {
-        +buildQueue() void
+        +buildSearchQueue() void
+        +pickNextTask() Task
+        +schedulerEmpty() boolean
         +handleNext() Response
         +handleControl(req) Response
         +remainingMs() number
@@ -367,13 +378,16 @@ classDiagram
 ```
 
 - **State.** The single in-memory source of truth for a run. Modelling it as one
-  typed object means the daily budget, queue cursor, terms, pause flag, dedupe
+  typed object means the daily budget, scheduler (search queue, per-term job
+  buckets with the round-robin cursor, company queue), terms, pause flag, dedupe
   index, and stats are saved and restored atomically in `state.json`, enabling
   crash-safe resume.
-- **Task.** The unit of work in the queue. A discriminated union of
+- **Task.** The unit of work in the scheduler. A discriminated union of
   search/job/company (with `term`/`jk`/`company` labels) is what lets the
   orchestrator emit one generic `/next` response while the core still knows how
   to parse each page.
+- **JobBucket.** The job pages discovered by one search term, drained
+  round-robin so every phrase is sampled before any phrase is exhausted.
 - **SeenJob.** The compact dedupe fingerprint. Storing only three booleans
   (has full description, has salary, has company) is enough to decide if a new
   scrape adds information, which keeps memory small even after thousands of
@@ -384,11 +398,12 @@ classDiagram
 - **Queued.** The dedupe ledger of which job keys and companies have already
   been enqueued. It prevents the same follow-up task from being added twice when
   it appears across multiple search terms.
-- **Orchestrator.** Implements the control plane: `buildQueue` seeds the search
-  tasks, `handleNext` applies budget/cap/pause rules and pops one task,
-  `handleControl` mutates configuration, and `rollover` resets the daily budget
-  at midnight. It is where the "slow and polite by construction" policy is
-  actually enforced.
+- **Orchestrator.** Implements the control plane: `buildSearchQueue` seeds the
+  search tasks, `pickNextTask` returns searches first, then round-robins the job
+  buckets, then drains company pages (`handleNext` applies budget/cap/pause
+  rules around it), `handleControl` mutates configuration, and `rollover` resets
+  the daily budget at midnight. It is where the "slow and polite by construction"
+  policy is actually enforced.
 - **Ingest.** Implements the data plane's integrity: `seenFlags` derives the
   fingerprint, `buildSeenIndex` rebuilds it from disk, `hasNewInfo`/`mergedSeen`
   decide what to write, and `norm` canonicalises company names used for
@@ -397,11 +412,11 @@ classDiagram
   and joins companies, `parseSalary`/`annualize` normalise compensation,
   `extractTags`/`extractSeniority` enrich for filtering, `stripHtml` cleans
   descriptions, and `toCsv`/`toMarkdown` render the deliverables.
-- **Relationships.** The compositions show that `State` owns the queue and
-  dedupe maps; the dashed dependencies show that the Orchestrator mutates
-  `State`, Ingest reads/writes `SeenJob` and the queue, and Export consumes the
-  deduped listings — i.e. control, data, and value flow through the same state
-  object.
+- **Relationships.** The compositions show that `State` owns the search queue,
+  job buckets, company queue, and dedupe maps; the dashed dependencies show that
+  the Orchestrator mutates `State`, Ingest reads/writes `SeenJob` and the
+  scheduler, and Export consumes the deduped listings — i.e. control, data, and
+  value flow through the same state object.
 
 ---
 
@@ -425,6 +440,7 @@ sequenceDiagram
     P->>S: POST /control start
     Note over C: on each Indeed page load
     C->>S: GET /next
+    S->>S: pickNextTask (searches, then jobs round-robin, then companies)
     S-->>C: action, url, delayMs
     C->>I: navigate /viewjob
     I-->>C: HTML + JSON-LD

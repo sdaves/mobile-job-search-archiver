@@ -134,8 +134,12 @@ Agent/internals doc. Read this before changing anything.
 
 Queue build order per run:
 1. one search URL per term -> `https://www.indeed.com/jobs?q=<term>&l=Remote&sort=date`
-2. every discovered job URL (`/viewjob?jk=...`)
-3. unique company pages (`/cmp/<slug>`)
+   (all terms are searched first, each accumulating a per-term job bucket)
+2. discovered job URLs (`/viewjob?jk=...`), visited **round-robin**: one job
+   per term per round (job #1 of every term, then job #2 of every term, ...)
+3. unique company pages (`/cmp/<slug>`), after the job buckets drain
+The run ends for the day (`action:"stop"`, reason `done`) once the search
+queue, all job buckets, and the company queue are empty.
 
 ## Userscript behavior (`@match https://*.indeed.com/*`)
 
@@ -212,8 +216,9 @@ record appends again because it adds the description. Export merges by `jk`
 anyway, so this only reduces redundant lines.
 
 `norm` (`queued.jobs`/`queued.companies`) still gates search-task, job-task,
-and company-page queueing. On `start`, the queue is rebuilt from terms **only
-when empty**; otherwise the persisted queue resumes.
+and company-page queueing. On `start`, the search queue is rebuilt from terms
+**only when the whole scheduler is empty** (`searchQueue`, all `jobBuckets`,
+`companyQueue`); otherwise the persisted scheduler resumes.
 
 Export joins job->company, flags `size_min>=1 && size_max<=50`, sorts by parsed
 salary desc, and adds parsed `seniority` + `tech_tags` + a `notes` field.
