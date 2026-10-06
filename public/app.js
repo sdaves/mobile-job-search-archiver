@@ -67,6 +67,16 @@ $("save").onclick = () => {
 let listingRows = [];
 let pendingListingRefresh = false;
 
+function descHash(s) {
+  const t = String(s || "").replace(/\s+/g, " ").trim();
+  let h = 0x811c9dc5;
+  for (let i = 0; i < t.length; i++) {
+    h ^= t.charCodeAt(i);
+    h = (h * 0x01000193) >>> 0;
+  }
+  return h.toString(16);
+}
+
 // Fetch + merge listings into memory only (no DOM writes).
 async function fetchListings() {
   const r = await fetch("/listings", { cache: "no-store" });
@@ -82,7 +92,29 @@ async function fetchListings() {
     merged.scraped_at = [prev.scraped_at, j.scraped_at].filter(Boolean).sort()[0] || "";
     byJk.set(j.jk, merged);
   }
-  listingRows = [...byJk.values()].sort((a, b) =>
+  // Collapse postings sharing an identical description (same job under
+  // different jks), joining their distinct locations.
+  const byDesc = new Map();
+  for (const j of byJk.values()) {
+    const full = !!(j.description_html && j.description_html.length);
+    const gkey = full ? "d:" + descHash(j.description_html) : "j:" + j.jk;
+    const prev = byDesc.get(gkey);
+    if (!prev) {
+      byDesc.set(gkey, { ...j });
+      continue;
+    }
+    const merged = { ...prev };
+    for (const [k, v] of Object.entries(j)) {
+      if (v !== null && v !== undefined && v !== "" && !merged[k]) merged[k] = v;
+    }
+    merged.scraped_at = [prev.scraped_at, j.scraped_at].filter(Boolean).sort()[0] || "";
+    const locs = merged._locs || (prev.location ? [prev.location] : []);
+    if (j.location && !locs.includes(j.location)) locs.push(j.location);
+    merged._locs = locs;
+    merged.location = locs.join(" / ");
+    byDesc.set(gkey, merged);
+  }
+  listingRows = [...byDesc.values()].sort((a, b) =>
     (b.scraped_at || "").localeCompare(a.scraped_at || ""),
   );
 }

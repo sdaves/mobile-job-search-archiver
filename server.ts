@@ -141,6 +141,7 @@ function loadState() {
   // listings.jsonl so first-seen dates survive even without a state file.
   _state.seenJobs = buildSeenIndex();
   _state.firstScraped = buildFirstScraped();
+  rebuildContentIndex();
   ensureTerms();
 }
 
@@ -258,7 +259,7 @@ function pickNextTask(): Task | null {
     _state.bucketCursor++;
     if (bucket.jobs.length) {
       const t = bucket.jobs.shift()!;
-      if (!isSkippableUrl(t.url) && !jobAlreadyDownloaded(t)) return t;
+      if (!isSkippableUrl(t.url) && !jobAlreadyDownloaded(t) && !contentAlreadyFull(t.jk)) return t;
       tries = -1; // skipped task: restart the scan within this same call
     }
   }
@@ -425,6 +426,51 @@ function norm(s: string) {
     .trim();
 }
 
+// ---------- content dedupe ----------
+// Indeed lists the same posting under different jks (e.g. one per city). We gate
+// fetches on a title+company key available from the search card, and collapse
+// identical descriptions for display/export.
+function titleKey(s: string) {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function contentKey(title: string, company: string) {
+  const t = titleKey(title);
+  const c = titleKey(company);
+  return t && c ? t + "\u0000" + c : "";
+}
+function normalizeDesc(html: string) {
+  return (html || "").replace(/\s+/g, " ").trim();
+}
+function descHash(html: string) {
+  return createHash("sha1").update(normalizeDesc(html)).digest("hex");
+}
+
+// contentFull: title+company keys we already have a full description for.
+// jkContent: jk -> its title+company key (to check persisted bucket tasks).
+let contentFull = new Set<string>();
+let jkContent: Record<string, string> = {};
+
+function rebuildContentIndex() {
+  contentFull = new Set<string>();
+  jkContent = {};
+  for (const rec of readJsonl(LISTINGS_FILE)) {
+    if (!rec || rec.kind !== "job" || !rec.jk) continue;
+    const key = String(rec.jk);
+    const ck = contentKey(rec.title, rec.company);
+    if (!ck) continue;
+    if (!jkContent[key]) jkContent[key] = ck;
+    if (rec.description_html) contentFull.add(ck);
+  }
+}
+function contentAlreadyFull(jk: string | undefined) {
+  const ck = jk ? jkContent[jk] : "";
+  return !!ck && contentFull.has(ck);
+}
+
 // ---------- salary ----------
 function parseSalary(raw: string) {
   if (!raw) return { min: null as number | null, max: null as number | null, currency: null as string | null, period: null as string | null };
@@ -541,12 +587,36 @@ function buildExport() {
       byJk.set(r.jk, merged);
     }
   }
+  // Collapse postings that share an identical description (same job listed
+  // under different jks); join their distinct locations.
+  const byDesc = new Map<string, Job>();
+  for (const j of byJk.values()) {
+    const full = !!(j.description_html && String(j.description_html).length);
+    const gkey = full ? "d:" + descHash(j.description_html) : "j:" + j.jk;
+    const prev = byDesc.get(gkey);
+    if (!prev) {
+      byDesc.set(gkey, { ...j });
+      continue;
+    }
+    const merged = { ...prev };
+    for (const [k, v] of Object.entries(j)) {
+      if (v !== null && v !== undefined && v !== "" && !merged[k]) merged[k] = v;
+    }
+    merged.scraped_at = [prev.scraped_at, j.scraped_at].filter(Boolean).sort()[0] || "";
+    const locs: string[] = (merged as any)._locs || (prev.location ? [prev.location] : []);
+    if (j.location && !locs.includes(j.location)) locs.push(j.location);
+    (merged as any)._locs = locs;
+    merged.location = locs.join(" / ");
+    byDesc.set(gkey, merged);
+  }
+  const collapsed = [...byDesc.values()];
+
   const companies = readJsonl(COMPANIES_FILE);
   const cMap = new Map<string, any>();
   for (const c of companies) cMap.set(norm(c.name), c);
 
   const out: any[] = [];
-  for (const j of byJk.values()) {
+  for (const j of collapsed) {
     const c = cMap.get(norm(j.company)) || null;
     const sal = parseSalary(j.salary_raw || "");
     const hasFullDesc = !!(j.description_html && String(j.description_html).length > 0);
@@ -801,8 +871,16 @@ async function handleIngest(req: Request) {
     for (const j of jobs) {
       if (!j.jk) continue;
       const key = String(j.jk);
+      // Same posting can appear under a different jk (one per city); gate on
+      // title+company so we do not fetch a page we already have.
+      const ck = contentKey(j.title, j.company);
+      if (ck && contentFull.has(ck)) {
+        skippedFull++;
+        continue;
+      }
       if (_state.queued.jobs.includes(key)) continue;
       _state.queued.jobs.push(key);
+      if (ck && !jkContent[key]) jkContent[key] = ck;
       const f = seenFlags(j);
       if (hasNewInfo(_state.seenJobs[key], f)) {
         const at = firstScrapedAt(key, scraped_at);
@@ -839,6 +917,13 @@ async function handleIngest(req: Request) {
       if (key) _state.seenJobs[key] = mergedSeen(_state.seenJobs[key], f);
     } else {
       addLog(`job "${body.title || ""}" (dup, skipped)`);
+    }
+    if (key && f.full) {
+      const ck = contentKey(body.title, body.company);
+      if (ck) {
+        contentFull.add(ck);
+        if (!jkContent[key]) jkContent[key] = ck;
+      }
     }
     _state.stats.jobs++;
     const cname = norm(body.company);
@@ -906,6 +991,7 @@ async function handleControl(req: Request) {
     _state.pagesThisRun = 0;
     _state.seenJobs = buildSeenIndex();
     _state.firstScraped = buildFirstScraped();
+    rebuildContentIndex();
     addLog("reset queue/stats");
   } else {
     return json({ ok: false, error: "unknown cmd" }, 400);

@@ -74,7 +74,8 @@ Agent/internals doc. Read this before changing anything.
     (first-seen) `scraped_at`**: a later re-scrape never moves a listing's date.
     Merge also **prefers non-empty field values** so a later, poorer re-scrape
     cannot blank a field (salary/location/company) that an earlier scrape
-    already filled.
+    already filled. Records with an **identical description** are then collapsed
+    into one row (locations joined).
   - `GET /listings` is served with `Cache-Control: no-store` so the dashboard
     never shows stale data.
   - The listings grid polls `/listings` every 15s but **only repaints while
@@ -244,10 +245,26 @@ A job page whose `jk` already has a full `description_html` (per `seenJobs`) is
 drops any stale bucket task for it. This holds even if salary/company are still
 missing, so a `reset` cannot make the crawler re-visit already-downloaded pages.
 
+Indeed also lists the *same* posting under different `jk`s (e.g. one per city),
+so dedupe is not only by `jk`. A **content index** (rebuilt from
+`listings.jsonl`, not persisted) maps `title+company` (`contentKey`) to whether a
+full description exists (`contentFull`) and maps each `jk` to its content key
+(`jkContent`). Search discovery skips a card whose `title+company` already has a
+full description (never fetched, counted in the search log as
+`already-downloaded`), and `pickNextTask` drops such stale bucket tasks. The
+accepted tradeoff: two genuinely different same-title/company roles are only
+distinguished later, by their (differing) descriptions.
+
 `norm` (`queued.jobs`/`queued.companies`) still gates search-task, job-task,
 and company-page queueing. On `start`, the search queue is rebuilt from terms
 **only when the whole scheduler is empty** (`searchQueue`, all `jobBuckets`,
 `companyQueue`); otherwise the persisted scheduler resumes.
+
+Export and the dashboard further **collapse records with an identical
+description**: full records group by a whitespace-normalized description hash
+(each group keeps the earliest `scraped_at` and non-empty fields) and their
+distinct locations are joined (`"Boston, MA, US / New York, NY, US"`); records
+without a description stay separate.
 
 Export joins job->company, flags `size_min>=1 && size_max<=50`, sorts by parsed
 salary desc, and adds parsed `seniority` + `tech_tags` + a `notes` field.
