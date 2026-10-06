@@ -418,9 +418,10 @@ function buildExport() {
     if (!prev) {
       byJk.set(r.jk, r);
     } else {
-      const merged = { ...prev, ...r };
-      if (!r.description_html && prev.description_html) merged.description_html = prev.description_html;
-      if (!r.salary_raw && prev.salary_raw) merged.salary_raw = prev.salary_raw;
+      const merged = { ...prev };
+      for (const [k, v] of Object.entries(r)) {
+        if (v !== null && v !== undefined && v !== "") merged[k] = v;
+      }
       byJk.set(r.jk, merged);
     }
   }

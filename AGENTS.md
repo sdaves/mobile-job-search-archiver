@@ -71,7 +71,9 @@ Agent/internals doc. Read this before changing anything.
   - Listings are **sorted newest-first by `scraped_at`**, deduped by `jk`,
     capped at 50. Per-`jk` merge keeps the **max `scraped_at`**, not the
     first-seen position — fixes a bug where a job's early search-stub position
-    buried its later full scrape outside the top 50.
+    buried its later full scrape outside the top 50. Merge also **prefers
+    non-empty field values** so a later, poorer re-scrape cannot blank a field
+    (salary/location/company) that an earlier scrape already filled.
   - `GET /listings` is served with `Cache-Control: no-store` so the dashboard
     never shows stale data.
 

@@ -73,13 +73,12 @@ async function loadListings() {
     for (const j of rows) {
       if (!j.jk) continue;
       const prev = byJk.get(j.jk) || {};
-      byJk.set(j.jk, {
-        ...prev,
-        ...j,
-        scraped_at: [prev.scraped_at, j.scraped_at].filter(Boolean).sort().pop() || "",
-        description_html: j.description_html || prev.description_html,
-        description_snippet: j.description_snippet || prev.description_snippet,
-      });
+      const merged = { ...prev };
+      for (const [k, v] of Object.entries(j)) {
+        if (v !== null && v !== undefined && v !== "") merged[k] = v;
+      }
+      merged.scraped_at = [prev.scraped_at, j.scraped_at].filter(Boolean).sort().pop() || "";
+      byJk.set(j.jk, merged);
     }
     listingRows = [...byJk.values()].sort((a, b) =>
       (b.scraped_at || "").localeCompare(a.scraped_at || ""),
