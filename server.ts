@@ -112,6 +112,14 @@ function defaultState(): State {
 
 let _state: State = defaultState();
 
+// Terms should never be empty: fall back to the built-in defaults so a blank
+// "Search terms" box always has something to restore.
+function ensureTerms() {
+  if (!Array.isArray(_state.terms) || _state.terms.length === 0) {
+    _state.terms = [...DEFAULT_TERMS];
+  }
+}
+
 function loadState() {
   try {
     if (existsSync(STATE_FILE)) {
@@ -133,6 +141,7 @@ function loadState() {
   // listings.jsonl so first-seen dates survive even without a state file.
   _state.seenJobs = buildSeenIndex();
   _state.firstScraped = buildFirstScraped();
+  ensureTerms();
 }
 
 // State written before the round-robin scheduler kept a single flat `queue`.
@@ -229,6 +238,12 @@ function schedulerEmpty() {
   );
 }
 
+// A job page is only worth visiting if we do not already have its full
+// description on file (even if salary/company are still missing).
+function jobAlreadyDownloaded(t: Task) {
+  return !!(t.jk && _state.seenJobs[t.jk]?.full);
+}
+
 // Order: all searches first (each accumulates a job bucket), then one job per
 // bucket per round (round-robin), then company pages.
 function pickNextTask(): Task | null {
@@ -243,7 +258,7 @@ function pickNextTask(): Task | null {
     _state.bucketCursor++;
     if (bucket.jobs.length) {
       const t = bucket.jobs.shift()!;
-      if (!isSkippableUrl(t.url)) return t;
+      if (!isSkippableUrl(t.url) && !jobAlreadyDownloaded(t)) return t;
       tries = -1; // skipped task: restart the scan within this same call
     }
   }
@@ -627,6 +642,7 @@ function statePayload() {
     paused: _state.paused,
     pauseReason: _state.pauseReason,
     terms: _state.terms,
+    defaultTerms: [...DEFAULT_TERMS],
     budgetMinutes: _state.budgetMinutes,
     delayMinMs: _state.delayMinMs,
     delayMaxMs: _state.delayMaxMs,
@@ -781,6 +797,7 @@ async function handleIngest(req: Request) {
     const jobs = Array.isArray(body.jobs) ? body.jobs : [];
     const fresh: Task[] = [];
     let added = 0;
+    let skippedFull = 0;
     for (const j of jobs) {
       if (!j.jk) continue;
       const key = String(j.jk);
@@ -792,8 +809,11 @@ async function handleIngest(req: Request) {
         appendJsonl(LISTINGS_FILE, { kind: "job", ...j, source: "search", scraped_at: at });
         _state.seenJobs[key] = mergedSeen(_state.seenJobs[key], f);
       }
-      if (j.url && !isSkippableUrl(j.url)) {
+      const alreadyFull = !!_state.seenJobs[key]?.full;
+      if (j.url && !isSkippableUrl(j.url) && !alreadyFull) {
         fresh.push({ type: "job", url: toMobileUrl(j.url), jk: key, company: j.company });
+      } else if (j.url && alreadyFull) {
+        skippedFull++;
       } else if (j.url) {
         addLog(`skipped job url (pattern): ${String(j.url).slice(0, 120)}`);
       }
@@ -809,7 +829,7 @@ async function handleIngest(req: Request) {
     else _state.jobBuckets.push({ term, jobs: fresh });
     const pendingJobs = _state.jobBuckets.reduce((n, b) => n + b.jobs.length, 0);
     _state.stats.searches++;
-    addLog(`search "${term}": +${added} jobs, ${fresh.length} queued for detail (${_state.jobBuckets.length} terms, ${pendingJobs} jobs pending)`);
+    addLog(`search "${term}": +${added} jobs, ${fresh.length} queued for detail, ${skippedFull} already-downloaded (${_state.jobBuckets.length} terms, ${pendingJobs} jobs pending)`);
   } else if (kind === "job") {
     const key = body.jk ? String(body.jk) : "";
     const f = seenFlags(body);
@@ -851,6 +871,7 @@ async function handleControl(req: Request) {
   const cmd = body.cmd;
   if (cmd === "start") {
     rollover();
+    ensureTerms();
     _state.running = true;
     _state.paused = false;
     _state.pauseReason = undefined;
@@ -863,6 +884,7 @@ async function handleControl(req: Request) {
   } else if (cmd === "terms") {
     if (Array.isArray(body.terms)) {
       _state.terms = body.terms.map((t: string) => String(t).trim()).filter(Boolean);
+      ensureTerms();
       addLog(`terms set (${_state.terms.length})`);
     }
   } else if (cmd === "budget") {

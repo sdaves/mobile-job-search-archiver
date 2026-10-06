@@ -36,7 +36,8 @@ function renderState(st) {
   $("sCompanies").textContent = st.stats.companies;
 
   if (document.activeElement !== $("terms")) {
-    $("terms").value = (st.terms || []).join("\n");
+    const terms = st.terms && st.terms.length ? st.terms : st.defaultTerms || [];
+    $("terms").value = terms.join("\n");
   }
   $("budget").value = st.budgetMinutes;
   $("maxPages").value = st.maxPages;
@@ -64,35 +65,69 @@ $("save").onclick = () => {
 };
 
 let listingRows = [];
+let pendingListingRefresh = false;
 
+// Fetch + merge listings into memory only (no DOM writes).
+async function fetchListings() {
+  const r = await fetch("/listings", { cache: "no-store" });
+  const rows = await r.json();
+  const byJk = new Map();
+  for (const j of rows) {
+    if (!j.jk) continue;
+    const prev = byJk.get(j.jk) || {};
+    const merged = { ...prev };
+    for (const [k, v] of Object.entries(j)) {
+      if (v !== null && v !== undefined && v !== "") merged[k] = v;
+    }
+    merged.scraped_at = [prev.scraped_at, j.scraped_at].filter(Boolean).sort()[0] || "";
+    byJk.set(j.jk, merged);
+  }
+  listingRows = [...byJk.values()].sort((a, b) =>
+    (b.scraped_at || "").localeCompare(a.scraped_at || ""),
+  );
+}
+
+// Explicit refresh (initial load, Reload button): always repaint at the top.
 async function loadListings() {
   try {
-    const r = await fetch("/listings", { cache: "no-store" });
-    const rows = await r.json();
-    const byJk = new Map();
-    for (const j of rows) {
-      if (!j.jk) continue;
-      const prev = byJk.get(j.jk) || {};
-      const merged = { ...prev };
-      for (const [k, v] of Object.entries(j)) {
-        if (v !== null && v !== undefined && v !== "") merged[k] = v;
-      }
-      merged.scraped_at = [prev.scraped_at, j.scraped_at].filter(Boolean).sort()[0] || "";
-      byJk.set(j.jk, merged);
-    }
-    listingRows = [...byJk.values()].sort((a, b) =>
-      (b.scraped_at || "").localeCompare(a.scraped_at || ""),
-    );
+    await fetchListings();
     renderListings();
   } catch {}
 }
 
+function listingFilterActive() {
+  return ($("listingFilter")?.value || "").trim() !== "";
+}
+
+function gridAtTop() {
+  const el = document.getElementById("listingsScroll");
+  return !el || el.scrollTop <= 4;
+}
+
+// Background poll: keep data fresh, but only repaint while a filter is active
+// or the grid is scrolled to the top. Otherwise defer so an in-progress browse
+// (open description rows, scroll position) is not disturbed.
+async function autoRefreshListings() {
+  try {
+    await fetchListings();
+    if (listingFilterActive() || gridAtTop()) {
+      renderListings();
+    } else {
+      pendingListingRefresh = true;
+    }
+  } catch {}
+}
+
 function renderListings() {
+  pendingListingRefresh = false;
   const filter = ($("listingFilter")?.value || "").trim().toLowerCase();
   const list = (filter
     ? listingRows.filter((j) => listingHaystack(j).includes(filter))
     : listingRows
-  ).slice(0, 50);
+  ).slice(0, 500);
+
+  const countEl = $("listingCount");
+  if (countEl) countEl.textContent = `${list.length} shown`;
 
   const tb = $("listings").querySelector("tbody");
   tb.innerHTML = "";
@@ -335,11 +370,18 @@ function connect() {
   };
 }
 
+const listingsScrollEl = document.getElementById("listingsScroll");
+if (listingsScrollEl) {
+  listingsScrollEl.addEventListener("scroll", () => {
+    if (pendingListingRefresh && gridAtTop()) renderListings();
+  });
+}
+
 connect();
 loadListings();
 loadWebLog();
 loadDocs();
 loadAgentStatus();
-setInterval(loadListings, 15000);
+setInterval(autoRefreshListings, 15000);
 setInterval(loadWebLog, 4000);
 setInterval(loadAgentStatus, 5000);

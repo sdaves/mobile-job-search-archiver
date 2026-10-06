@@ -41,6 +41,8 @@
   #listings tbody tr.job-row.expandable { cursor: pointer; }
   #listings tbody tr.job-row.expandable:hover { background: #1a1f29; }
   #listings tbody tr.job-row.open { background: #1a1f29; }
+  #listings thead th { position: sticky; top: 0; background: #161a22; z-index: 1; }
+  .listings-scroll { max-height: 1000px; overflow: auto; border: 1px solid #232936; border-radius: 8px; }
   .desc-cell { background: #0f131a; color: #c8d0db; }
   .desc-body { max-height: 320px; overflow: auto; white-space: normal; overflow-wrap: anywhere; font-size: 13px; padding: 2px 4px; }
   .desc-body p { margin: .5em 0; }
@@ -130,11 +132,11 @@
   </div>
 
   <div class="card">
-    <h2>Recent listings</h2>
+    <h2>Recent listings <span id="listingCount" class="muted" style="float:right"></span></h2>
     <div class="row" style="margin-bottom:10px">
       <input id="listingFilter" type="search" placeholder="Filter listings (any field, incl. description)…" />
     </div>
-    <div style="overflow:auto"><table id="listings"><thead><tr><th>Title</th><th>Company</th><th>Size</th><th>Salary</th><th>Location</th><th>Scraped</th><th>Desc</th></tr></thead><tbody></tbody></table></div>
+    <div class="listings-scroll" id="listingsScroll"><table id="listings"><thead><tr><th>Title</th><th>Company</th><th>Size</th><th>Salary</th><th>Location</th><th>Scraped</th><th>Desc</th></tr></thead><tbody></tbody></table></div>
   </div>
 
   <div class="card">

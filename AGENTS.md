@@ -69,12 +69,25 @@ Agent/internals doc. Read this before changing anything.
     detail row reveals the description (rendered HTML when available, escaped
     snippet otherwise).
   - Listings are **sorted newest-first by `scraped_at`**, deduped by `jk`,
-    capped at 50. Per-`jk` merge keeps the **earliest (first-seen)
-    `scraped_at`**: a later re-scrape never moves a listing's date. Merge also
-    **prefers non-empty field values** so a later, poorer re-scrape cannot blank
-    a field (salary/location/company) that an earlier scrape already filled.
+    capped at the newest **500**. The table lives in a **vertically scrollable
+    box** (~30 rows tall, sticky header). Per-`jk` merge keeps the **earliest
+    (first-seen) `scraped_at`**: a later re-scrape never moves a listing's date.
+    Merge also **prefers non-empty field values** so a later, poorer re-scrape
+    cannot blank a field (salary/location/company) that an earlier scrape
+    already filled.
   - `GET /listings` is served with `Cache-Control: no-store` so the dashboard
     never shows stale data.
+  - The listings grid polls `/listings` every 15s but **only repaints while
+    scrolled to the top** of the grid, or while a filter is active; otherwise
+    the fresh data is held and the repaint is deferred so an in-progress browse
+    (open description rows, scroll position) is not disturbed. Reaching the top
+    flushes a deferred repaint; **Reload listings** always repaints (at the top).
+  - The heading shows the number of rows currently in the grid (`N shown`,
+    after the active filter and the 500 cap).
+  - The Search-terms box never stays blank: if the stored term list is empty the
+    server restores the 10 built-in defaults (`ensureTerms`, on load/start/terms
+    save) and `/state` also carries `defaultTerms` so the box repopulates on the
+    first paint.
 
 ## Files
 
@@ -225,6 +238,11 @@ for a `jk`, rebuilt from `listings.jsonl` on load and on `reset`. Every appended
 job record is stamped with that first-seen time (`firstScrapedAt`), so a later
 re-scrape that adds a description/salary keeps the original date; export and the
 dashboard's `jk` merge likewise keep the earliest `scraped_at`.
+
+A job page whose `jk` already has a full `description_html` (per `seenJobs`) is
+**never queued again**: search discovery skips enqueuing it, and `pickNextTask`
+drops any stale bucket task for it. This holds even if salary/company are still
+missing, so a `reset` cannot make the crawler re-visit already-downloaded pages.
 
 `norm` (`queued.jobs`/`queued.companies`) still gates search-task, job-task,
 and company-page queueing. On `start`, the search queue is rebuilt from terms
