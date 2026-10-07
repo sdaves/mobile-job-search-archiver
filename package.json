@@ -1,4 +1,9 @@
 {
+  "name": "indeed-small-company-jobs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Collect remote software job listings from Indeed and keep those at small companies (1-50 employees).",
+  "license": "MIT",
   "dependencies": {},
   "devDependencies": {
     "jsdom": "^30.1.2"
