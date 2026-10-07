@@ -471,6 +471,105 @@ function contentAlreadyFull(jk: string | undefined) {
   return !!ck && contentFull.has(ck);
 }
 
+// Queue every job page we have no full description for. De-duped by
+// title+company (keep the earliest first-seen), skipping jobs already pending
+// and jobs whose content key already has a description elsewhere.
+function enqueueMissingDescriptions(): number {
+  const pending = new Set<string>();
+  for (const b of _state.jobBuckets) for (const t of b.jobs) if (t.jk) pending.add(t.jk);
+
+  const info: Record<string, any> = {};
+  for (const r of readJsonl(LISTINGS_FILE)) {
+    if (!r || r.kind !== "job" || !r.jk) continue;
+    const k = String(r.jk);
+    const d = info[k] || (info[k] = {});
+    for (const [kk, v] of Object.entries(r)) {
+      if (v !== null && v !== undefined && v !== "") d[kk] = v;
+    }
+  }
+
+  // One representative per title+company: the earliest first-seen jk.
+  const reps = new Map<string, string>();
+  for (const k of Object.keys(info)) {
+    const d = info[k];
+    const ck = contentKey(d.title, d.company) || `jk:${k}`;
+    const cur = reps.get(ck);
+    if (!cur) {
+      reps.set(ck, k);
+      continue;
+    }
+    const at = _state.firstScraped[k] || d.scraped_at || "";
+    const atCur = _state.firstScraped[cur] || info[cur]?.scraped_at || "";
+    if (at && (!atCur || at < atCur)) reps.set(ck, k);
+  }
+
+  const tasks: Task[] = [];
+  for (const k of reps.values()) {
+    if (_state.seenJobs[k]?.full) continue;
+    if (pending.has(k)) continue;
+    const d = info[k];
+    const ck = contentKey(d.title, d.company);
+    if (ck && contentFull.has(ck)) continue;
+    const url = toMobileUrl(d.url || `https://www.indeed.com/viewjob?jk=${k}`);
+    if (!url || isSkippableUrl(url)) continue;
+    tasks.push({ type: "job", url, jk: k, company: d.company || "" });
+  }
+
+  if (!tasks.length) return 0;
+  const bucket = _state.jobBuckets.find((b) => b.term === "missing-desc");
+  if (bucket) bucket.jobs.push(...tasks);
+  else _state.jobBuckets.push({ term: "missing-desc", jobs: tasks });
+  return tasks.length;
+}
+
+// Remove every job record that has no description_html. Jobs that still have a
+// full record keep it (only their description-less stub lines go); jobs with no
+// full record at all disappear, and any pending job tasks for them are dropped
+// so they are not re-fetched and re-added.
+function deleteMissingDescriptions(): number {
+  if (!existsSync(LISTINGS_FILE)) return 0;
+  const lines = readFileSync(LISTINGS_FILE, "utf8").split("\n").filter(Boolean);
+
+  const allJks = new Set<string>();
+  const fullJks = new Set<string>();
+  for (const l of lines) {
+    let r: any = null;
+    try {
+      r = JSON.parse(l);
+    } catch {}
+    if (r && r.kind === "job" && r.jk) {
+      const k = String(r.jk);
+      allJks.add(k);
+      if (r.description_html) fullJks.add(k);
+    }
+  }
+  const goneJks = new Set([...allJks].filter((k) => !fullJks.has(k)));
+
+  const kept: string[] = [];
+  let removed = 0;
+  for (const l of lines) {
+    let r: any = null;
+    try {
+      r = JSON.parse(l);
+    } catch {}
+    if (r && r.kind === "job" && !r.description_html) {
+      removed++;
+      continue;
+    }
+    kept.push(l);
+  }
+  if (!removed) return 0;
+
+  writeFileSync(LISTINGS_FILE, kept.length ? kept.join("\n") + "\n" : "");
+  _state.seenJobs = buildSeenIndex();
+  _state.firstScraped = buildFirstScraped();
+  rebuildContentIndex();
+  for (const b of _state.jobBuckets) {
+    b.jobs = b.jobs.filter((t) => !(t.jk && goneJks.has(t.jk)));
+  }
+  return removed;
+}
+
 // ---------- salary ----------
 function parseSalary(raw: string) {
   if (!raw) return { min: null as number | null, max: null as number | null, currency: null as string | null, period: null as string | null };
@@ -972,6 +1071,12 @@ async function handleControl(req: Request) {
       ensureTerms();
       addLog(`terms set (${_state.terms.length})`);
     }
+  } else if (cmd === "backfill") {
+    const queued = enqueueMissingDescriptions();
+    addLog(`backfill: queued ${queued} missing-description job(s)`);
+  } else if (cmd === "pruneMissing") {
+    const removed = deleteMissingDescriptions();
+    addLog(`prune: removed ${removed} listing record(s) without a description`);
   } else if (cmd === "budget") {
     if (body.budgetMinutes != null) _state.budgetMinutes = Math.max(1, Number(body.budgetMinutes));
     if (body.maxPages != null) _state.maxPages = Math.max(1, Number(body.maxPages));

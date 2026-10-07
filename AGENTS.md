@@ -129,7 +129,15 @@ Agent/internals doc. Read this before changing anything.
                              `data/web.log`
 - `GET /web.log?tail=N`   -> recent browser log JSONL (default 200)
 - `POST /control`         -> `{cmd: "start"|"stop"|"terms"|"budget"|"reload"|
-                             "reset", ...}`
+                             "reset"|"backfill"|"pruneMissing", ...}`
+  - `backfill` queues job pages for every listing that has no full description
+    (deduped by title+company, keeping the earliest first-seen; skips pending
+    and already-described postings). Exposed as the top **Add Listings With
+    Missing Desc** button.
+  - `pruneMissing` deletes every listing record with no `description_html`
+    (jobs that still have a full record keep it; description-less jobs vanish
+    and their pending queue tasks are dropped). Exposed as the top **Delete
+    Listings Without Desc** button (confirms first).
 - `GET /livereload`       -> `{reloadToken, coreHash, loaderHash}`
 - `GET /events`           -> SSE live dashboard feed
 - `GET /state`            -> current state payload (one-shot)
@@ -183,7 +191,8 @@ otherwise `location.assign(url)` after `delayMs`. The core shows an immediate
 content wait, so a slow SPA render never leaves the page blank. Job-page
 readiness keys off the `JobPosting` JSON-LD (the stable/earliest signal on the
 `/m/` mobile page); the desktop-only description selectors never match there and
-previously forced the poll to its full 12s timeout. The diagnostic `report()`
+would otherwise force the poll to run long, so the content wait is capped at
+**2s**. The diagnostic `report()`
 status POSTs are fire-and-forget so they cannot delay the next-page banner.
 
 Challenge/CAPTCHA detection: text "Just a moment", "Additional Verification",

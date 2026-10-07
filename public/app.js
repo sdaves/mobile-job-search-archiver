@@ -52,6 +52,15 @@ $("stop").onclick = () => control({ cmd: "stop" });
 $("reset").onclick = () => {
   if (confirm("Clear the queue and stats? Collected listings are kept.")) control({ cmd: "reset" });
 };
+$("addMissing").onclick = () => control({ cmd: "backfill" });
+$("pruneMissing").onclick = () => {
+  if (
+    confirm(
+      "Delete all listing records without a description? Jobs that have a full description keep it; everything else is removed. This cannot be undone.",
+    )
+  )
+    control({ cmd: "pruneMissing" });
+};
 $("save").onclick = () => {
   const terms = $("terms").value.split("\n").map((t) => t.trim()).filter(Boolean);
   control({ cmd: "terms", terms });

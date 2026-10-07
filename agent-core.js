@@ -544,10 +544,10 @@
 
   // Wait for the page to finish rendering. Indeed is an SPA, so the initial
   // HTML is a shell; scraping too early yields empty results and can look like
-  // a Cloudflare interstitial. Poll for expected content, then require any
-  // challenge to persist before acting on it.
+  // a Cloudflare interstitial. Poll for expected content, but cap the "Scraping"
+  // phase at 2s so a slow/unmatched page never stalls the footer.
   async function waitForContent(type, maxMs) {
-    const deadline = Date.now() + (maxMs || 12000);
+    const deadline = Date.now() + (maxMs || 2000);
     const hasSearchCards = () =>
       document.querySelector("a[data-jk], a[href*='viewjob?jk='], .job_seen_beacon, [data-testid='slider_item'], li .jobTitle") ||
       (W._initialData && (W._initialData.jobKeys || W._initialData.jobs));
