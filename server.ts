@@ -451,15 +451,19 @@ function descHash(html: string) {
 
 // contentFull: title+company keys we already have a full description for.
 // jkContent: jk -> its title+company key (to check persisted bucket tasks).
+// jkTerm: jk -> the first search term that discovered it (for the grid column).
 let contentFull = new Set<string>();
 let jkContent: Record<string, string> = {};
+let jkTerm: Record<string, string> = {};
 
 function rebuildContentIndex() {
   contentFull = new Set<string>();
   jkContent = {};
+  jkTerm = {};
   for (const rec of readJsonl(LISTINGS_FILE)) {
     if (!rec || rec.kind !== "job" || !rec.jk) continue;
     const key = String(rec.jk);
+    if (rec.search_term && !jkTerm[key]) jkTerm[key] = String(rec.search_term);
     const ck = contentKey(rec.title, rec.company);
     if (!ck) continue;
     if (!jkContent[key]) jkContent[key] = ck;
@@ -706,6 +710,10 @@ function buildExport() {
     if (j.location && !locs.includes(j.location)) locs.push(j.location);
     (merged as any)._locs = locs;
     merged.location = locs.join(" / ");
+    const terms: string[] = (merged as any)._terms || (prev.search_term ? [prev.search_term] : []);
+    if (j.search_term && !terms.includes(j.search_term)) terms.push(j.search_term);
+    (merged as any)._terms = terms;
+    merged.search_term = terms.join(" / ");
     byDesc.set(gkey, merged);
   }
   const collapsed = [...byDesc.values()];
@@ -738,6 +746,7 @@ function buildExport() {
       salary_period: sal.period,
       salary_annual_max: annualize(sal.max, sal.period),
       location: j.location || "",
+      search_term: j.search_term || "",
       remote: j.remote ?? /remote/i.test(j.location || ""),
       employment_type: j.employment_type || "",
       date_posted: j.date_posted || "",
@@ -762,7 +771,7 @@ function toCsv(rows: any[]) {
   const cols = [
     "title", "company", "company_size", "small_company", "salary_raw",
     "salary_min", "salary_max", "salary_currency", "salary_period",
-    "salary_annual_max", "location", "remote", "employment_type",
+    "salary_annual_max", "location", "search_term", "remote", "employment_type",
     "date_posted", "url", "apply_url", "description_full", "seniority",
     "tech_tags", "notes",
   ];
@@ -964,6 +973,7 @@ async function handleIngest(req: Request) {
 
   if (kind === "search") {
     const jobs = Array.isArray(body.jobs) ? body.jobs : [];
+    const term = String(body.term || "");
     const fresh: Task[] = [];
     let added = 0;
     let skippedFull = 0;
@@ -980,10 +990,11 @@ async function handleIngest(req: Request) {
       if (_state.queued.jobs.includes(key)) continue;
       _state.queued.jobs.push(key);
       if (ck && !jkContent[key]) jkContent[key] = ck;
+      if (term && !jkTerm[key]) jkTerm[key] = term;
       const f = seenFlags(j);
       if (hasNewInfo(_state.seenJobs[key], f)) {
         const at = firstScrapedAt(key, scraped_at);
-        appendJsonl(LISTINGS_FILE, { kind: "job", ...j, source: "search", scraped_at: at });
+        appendJsonl(LISTINGS_FILE, { kind: "job", ...j, source: "search", search_term: term, scraped_at: at });
         _state.seenJobs[key] = mergedSeen(_state.seenJobs[key], f);
       }
       const alreadyFull = !!_state.seenJobs[key]?.full;
@@ -1000,7 +1011,6 @@ async function handleIngest(req: Request) {
     // buckets. Once every search is done, jobs are visited round-robin (one
     // per term per round) so the budget samples every phrase instead of
     // exhausting one phrase's list first.
-    const term = String(body.term || "");
     const prior = _state.jobBuckets.find((b) => b.term === term);
     if (prior) prior.jobs.push(...fresh);
     else _state.jobBuckets.push({ term, jobs: fresh });
@@ -1012,7 +1022,10 @@ async function handleIngest(req: Request) {
     const f = seenFlags(body);
     if (!key || hasNewInfo(_state.seenJobs[key], f)) {
       const at = firstScrapedAt(key, scraped_at);
-      appendJsonl(LISTINGS_FILE, { kind: "job", ...body, source: body.source || "jobpage", scraped_at: at });
+      const rec: any = { kind: "job", ...body, source: body.source || "jobpage", scraped_at: at };
+      const t = body.search_term || jkTerm[key];
+      if (t) rec.search_term = t;
+      appendJsonl(LISTINGS_FILE, rec);
       if (key) _state.seenJobs[key] = mergedSeen(_state.seenJobs[key], f);
     } else {
       addLog(`job "${body.title || ""}" (dup, skipped)`);

@@ -63,8 +63,9 @@ Agent/internals doc. Read this before changing anything.
 - Dashboard was built in-session with these UX decisions:
   - Header is **not sticky** — it scrolls with the page.
   - Recent-listings columns: Title, Company, Size, Salary, Location,
-    **Scraped**, Desc. Title is a link to the saved listing `url`
-    (`target=_blank`).
+    **Search**, **Scraped**, Desc. Title is a link to the saved listing `url`
+    (`target=_blank`). Search is the term that discovered the job
+    (`search_term`, joined across terms for collapsed duplicates).
   - Rows with a description/snippet are **expandable on tap**: a full-width
     detail row reveals the description (rendered HTML when available, escaped
     snippet otherwise).
@@ -223,7 +224,7 @@ the core polls `/livereload` and reloads, re-fetching the edited core.
  "salary_raw":"...","salary_min":null,"salary_max":null,"currency":null,
  "location":"...","remote":true,"employment_type":"...","date_posted":"...",
  "description_html":"...","description_snippet":"...","apply_url":"...",
- "url":"...","source":"search|jobpage","scraped_at":"ISO"}
+ "url":"...","source":"search|jobpage","search_term":"...","scraped_at":"ISO"}
 ```
 
 `companies.jsonl`: `{"name","url","size_raw","size_min","size_max","revenue",
@@ -281,9 +282,9 @@ salary desc, and adds parsed `seniority` + `tech_tags` + a `notes` field.
 ## Export fields for resume building
 
 title, company, company_size, small_company, salary_raw/min/max,
-salary_currency, salary_period, salary_annual_max, location, remote,
-employment_type, date_posted, url, apply_url, description, description_full,
-seniority, tech_tags, notes, scraped_at.
+salary_currency, salary_period, salary_annual_max, location, search_term,
+remote, employment_type, date_posted, url, apply_url, description,
+description_full, seniority, tech_tags, notes, scraped_at.
 
 ## Run / verification
 

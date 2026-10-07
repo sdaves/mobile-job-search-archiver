@@ -121,6 +121,10 @@ async function fetchListings() {
     if (j.location && !locs.includes(j.location)) locs.push(j.location);
     merged._locs = locs;
     merged.location = locs.join(" / ");
+    const terms = merged._terms || (prev.search_term ? [prev.search_term] : []);
+    if (j.search_term && !terms.includes(j.search_term)) terms.push(j.search_term);
+    merged._terms = terms;
+    merged.search_term = terms.join(" / ");
     byDesc.set(gkey, merged);
   }
   listingRows = [...byDesc.values()].sort((a, b) =>
@@ -186,7 +190,7 @@ function renderListings() {
       : escapeHtml(j.title || "");
     const hasDesc = !!(j.description_html || j.description_snippet);
     tr.className = "job-row" + (hasDesc ? " expandable" : "");
-    tr.innerHTML = `<td>${title}</td><td>${escapeHtml(j.company || "")}</td><td>${size}</td><td>${escapeHtml(j.salary_raw || "")}</td><td>${escapeHtml(j.location || "")}</td><td class="muted">${escapeHtml(fmtScraped(j.scraped_at))}</td><td>${desc}</td>`;
+    tr.innerHTML = `<td>${title}</td><td>${escapeHtml(j.company || "")}</td><td>${size}</td><td>${escapeHtml(j.salary_raw || "")}</td><td>${escapeHtml(j.location || "")}</td><td class="muted">${escapeHtml(j.search_term || "—")}</td><td class="muted">${escapeHtml(fmtScraped(j.scraped_at))}</td><td>${desc}</td>`;
     tb.appendChild(tr);
 
     if (hasDesc) {
@@ -194,7 +198,7 @@ function renderListings() {
       exp.className = "desc-row";
       exp.hidden = true;
       const cell = document.createElement("td");
-      cell.colSpan = 7;
+      cell.colSpan = 8;
       cell.className = "desc-cell";
       cell.innerHTML = j.description_html
         ? `<div class="desc-body">${j.description_html}</div>`
@@ -217,6 +221,7 @@ function listingHaystack(j) {
     j.size_raw,
     j.salary_raw,
     j.location,
+    j.search_term,
     j.employment_type,
     j.date_posted,
     j.scraped_at,
